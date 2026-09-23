@@ -1,16 +1,26 @@
-# React + Vite
+# Frontend Nối
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Giao diện React cho đồ án PBL4 chat, gọi thoại và truyền tệp 1–1. Bản hiện tại dùng dữ liệu mẫu để hoàn thiện bố cục và luồng thao tác trước khi nối API.
 
-Currently, two official plugins are available:
+## Chạy giao diện
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```powershell
+npm install
+npm run dev
+```
 
-## React Compiler
+Mở `http://localhost:5173`. Vite chuyển tiếp request bắt đầu bằng `/api` đến backend HTTPS tại `https://localhost:7117`.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Kiểm tra
 
-## Expanding the Oxlint configuration
+```powershell
+npm run lint
+npm run build
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Phạm vi hiện tại
+
+- Có các màn hình trò chuyện, danh bạ, cuộc gọi, tệp, quản trị và cài đặt.
+- Nền sáng là mặc định; lựa chọn nền tối được lưu trong `localStorage`.
+- Tin nhắn gửi trong giao diện chỉ tồn tại trong bộ nhớ trình duyệt.
+- Chưa có xác thực, SignalR, WebRTC hoặc dữ liệu thật từ backend.

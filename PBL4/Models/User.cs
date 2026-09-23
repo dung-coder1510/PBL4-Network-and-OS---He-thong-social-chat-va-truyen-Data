@@ -42,7 +42,7 @@ namespace PBL4.Models
         // Navigations
         public ICollection<Contact> ContactsOwner { get; set; } = new List<Contact>();
         public ICollection<Contact> ContactsTarget { get; set; } = new List<Contact>();
-        public ICollection<DirectConversation> ConversationsAsLow { get; set; } = new List<DirectConversation>();
-        public ICollection<DirectConversation> ConversationsAsHigh { get; set; } = new List<DirectConversation>();
+        public ICollection<DirectConversation> ConversationsAsA { get; set; } = new List<DirectConversation>();
+        public ICollection<DirectConversation> ConversationsAsB { get; set; } = new List<DirectConversation>();
     }
 }

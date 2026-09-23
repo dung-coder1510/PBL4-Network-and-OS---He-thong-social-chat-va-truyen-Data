@@ -4,11 +4,11 @@
     {
         public long Id { get; set; } //[cite: 5]
 
-        public int UserLowId { get; set; } //[cite: 5]
-        public User UserLow { get; set; } = null!;
+        public int UserAID { get; set; } //[cite: 5]
+        public User UserA { get; set; } = null!;
 
-        public int UserHighId { get; set; } //[cite: 5]
-        public User UserHigh { get; set; } = null!;
+        public int UserBID { get; set; } //[cite: 5]
+        public User UserB { get; set; } = null!;
 
         public DateTime CreatedAt { get; set; } //[cite: 5]
 

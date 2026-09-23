@@ -1,4 +1,7 @@
 
+using Microsoft.EntityFrameworkCore;
+using PBL4.Data;
+
 namespace PBL4
 {
     public class Program
@@ -6,6 +9,9 @@ namespace PBL4
         public static void Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);
+
+            var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+                ?? throw new InvalidOperationException("Connection string 'DefaultConnection' was not found.");
 
             // Add services to the container.
             builder.Services.AddCors(options =>
@@ -15,6 +21,8 @@ namespace PBL4
                                     .AllowAnyMethod()
                                     .AllowAnyHeader());
             });
+            builder.Services.AddDbContext<AppDbContext>(options =>
+                options.UseSqlServer(connectionString));
             builder.Services.AddControllers();
             // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
             builder.Services.AddOpenApi();
@@ -29,11 +37,11 @@ namespace PBL4
 
             app.UseHttpsRedirection();
 
-            app.UseAuthorization();
-
             app.UseRouting();
 
             app.UseCors("AllowReactApp");
+
+            app.UseAuthorization();
 
             app.MapControllers();
 

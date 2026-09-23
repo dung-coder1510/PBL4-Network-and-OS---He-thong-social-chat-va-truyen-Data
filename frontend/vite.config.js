@@ -4,16 +4,14 @@ import { defineConfig } from 'vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-})
-export default defineConfig({
-    // ...plugins
-    server: {
-        proxy: {
-            '/api': {
-                target: 'https://localhost:7102', // Đổi thành port của ASP.NET API
-                changeOrigin: true,
-                secure: false,
-            }
-        }
-    }
+  server: {
+    strictPort: true,
+    proxy: {
+      '/api': {
+        target: 'https://localhost:7117',
+        changeOrigin: true,
+        secure: false,
+      },
+    },
+  },
 })

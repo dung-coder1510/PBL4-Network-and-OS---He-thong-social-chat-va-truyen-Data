@@ -64,13 +64,17 @@ namespace PBL4.Data
             // ==========================================
             modelBuilder.Entity<DirectConversation>(entity =>
             {
-                entity.HasIndex(e => new { e.UserLowId, e.UserHighId }).IsUnique();
+                entity.HasIndex(e => new { e.UserAID, e.UserBID }).IsUnique();
                 entity.Property(e => e.CreatedAt).HasColumnType("DATETIME2(3)").HasDefaultValueSql("SYSUTCDATETIME()");
 
-                entity.HasOne(e => e.UserLow).WithMany(u => u.ConversationsAsLow).HasForeignKey(e => e.UserLowId).OnDelete(DeleteBehavior.Restrict);
-                entity.HasOne(e => e.UserHigh).WithMany(u => u.ConversationsAsHigh).HasForeignKey(e => e.UserHighId).OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne(e => e.UserA).WithMany(u => u.ConversationsAsA).HasForeignKey(e => e.UserAID).OnDelete(DeleteBehavior.NoAction);
+                entity.HasOne(e => e.UserB).WithMany(u => u.ConversationsAsB).HasForeignKey(e => e.UserBID).OnDelete(DeleteBehavior.NoAction);
 
-                entity.ToTable(t => t.HasCheckConstraint("CK_Conversation_LowHigh", "[UserLowId] < [UserHighId]"));
+                entity.ToTable(t =>
+                {
+                    t.UseSqlOutputClause(false);
+                    t.HasCheckConstraint("CK_Conversation_AB", "[UserAID] < [UserBID]");
+                });
             });
 
             // ==========================================
@@ -89,6 +93,7 @@ namespace PBL4.Data
 
                 entity.ToTable(t =>
                 {
+                    t.UseSqlOutputClause(false);
                     t.HasCheckConstraint("CK_Message_Content", "LTRIM(RTRIM([Content])) <> ''");
                     t.HasCheckConstraint("CK_Message_Timeline",
                         "([DeliveredAt] IS NULL OR [DeliveredAt] >= [CreatedAt]) AND ([ReadAt] IS NULL OR ([DeliveredAt] IS NOT NULL AND [ReadAt] >= [DeliveredAt]))");
@@ -114,6 +119,7 @@ namespace PBL4.Data
 
                 entity.ToTable(t =>
                 {
+                    t.UseSqlOutputClause(false);
                     t.HasCheckConstraint("CK_File_Size", "[FileSizeBytes] >= 0");
                     t.HasCheckConstraint("CK_File_FileName", "LTRIM(RTRIM([FileName])) <> ''");
                     t.HasCheckConstraint("CK_File_Timeline",
@@ -139,6 +145,7 @@ namespace PBL4.Data
 
                 entity.ToTable(t =>
                 {
+                    t.UseSqlOutputClause(false);
                     t.HasCheckConstraint("CK_Call_Status", "[Status] IN ('ringing', 'active', 'completed', 'rejected', 'cancelled', 'missed', 'failed')");
                     t.HasCheckConstraint("CK_Call_Timeline",
                         "([AnsweredAt] IS NULL OR [AnsweredAt] >= [CreatedAt]) AND ([EndedAt] IS NULL OR [EndedAt] >= ISNULL([AnsweredAt], [CreatedAt]))");
@@ -159,6 +166,7 @@ namespace PBL4.Data
 
                 entity.ToTable(t =>
                 {
+                    t.UseSqlOutputClause(false);
                     t.HasCheckConstraint("CK_AdminLog_NotSelf", "[AdminUserId] <> [TargetUserId]");
                     t.HasCheckConstraint("CK_AdminLog_Reason_NoWhiteSpace", "LTRIM(RTRIM([Reason])) <> ''");
                     t.HasCheckConstraint("CK_AdminLog_ActionLogic",
