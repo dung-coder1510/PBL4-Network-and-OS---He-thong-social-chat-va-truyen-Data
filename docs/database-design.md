@@ -86,6 +86,7 @@ Các mốc thời gian dùng datetime2(3) theo UTC. CreatedAt được cấp m�
 | Username | nvarchar(32), UNIQUE | Tên đăng nhập, so sánh không phân biệt hoa/thường theo CI_AS |
 | PasswordHash | nvarchar(512) | Chuỗi hash mật khẩu do thư viện xác thực tạo |
 | DisplayName | nvarchar(100) | Tên hiển thị, có thể dùng tiếng Việt |
+| AvatarPath | nvarchar(512), NULL | Đường dẫn ảnh đại diện; NULL khi chưa có ảnh, không chứa dữ liệu ảnh |
 | CreatedAt | datetime2 | Thời điểm tạo tài khoản |
 | LastSeenAt | datetime2? | Lần cuối hoạt động được server ghi nhận |
 | IsDisabled | bit | Vô hiệu hóa đăng nhập và thao tác mới |

@@ -31,6 +31,12 @@ Chạy lệnh từ thư mục gốc repository. LocalDB phải đang chạy. V�
 
 `01_schema.sql` chạy **một lần trên database mới**, từ chối system database và từ chối nếu đã có bảng trùng tên. Script không chuyển đổi dữ liệu của database cũ. Nếu dùng công cụ chạy SQL khác `sqlcmd`, chọn chế độ dừng khi gặp lỗi. Toàn bộ phần tạo bảng/index/trigger nằm trong một transaction.
 
+## Bổ sung avatar vào database đã có
+
+Chọn đúng database ứng dụng trong SSMS và chạy [001_add_users_avatar_path.sql](migrations/001_add_users_avatar_path.sql). Script thêm `Users.AvatarPath NVARCHAR(512) NULL`, giữ nguyên dữ liệu cũ và có thể chạy lại. Database mới dùng `01_schema.sql` đã có cột này, không cần chạy lại script tạo bảng trên database cũ.
+
+`AvatarPath` lưu đường dẫn tương đối, ví dụ `avatars/abc123.webp`; `NULL` là chưa có ảnh. Chỉ bổ sung trường dữ liệu và model, chưa triển khai upload, lưu file ảnh hay hiển thị avatar.
+
 ## Kiểm thử độc lập trên LocalDB
 
 ```powershell

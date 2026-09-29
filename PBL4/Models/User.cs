@@ -26,6 +26,10 @@ namespace PBL4.Models
         [StringLength(100)]
         public string DisplayName { get; set; } = null!; //[cite: 4]
 
+        // Relative path to the avatar image; null means no uploaded avatar.
+        [StringLength(512)]
+        public string? AvatarPath { get; set; }
+
         [Required]
         [StringLength(10)]
         public string Role { get; set; } = "User"; //[cite: 4]

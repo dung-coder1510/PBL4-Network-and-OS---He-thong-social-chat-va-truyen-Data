@@ -89,6 +89,7 @@ erDiagram
 | `Username` | `NVARCHAR(32)` | Không | UNIQUE | Tên đăng nhập |
 | `PasswordHash` | `NVARCHAR(512)` | Không | — | Hash mật khẩu do thư viện xác thực tạo |
 | `DisplayName` | `NVARCHAR(100)` | Không | — | Tên hiển thị |
+| `AvatarPath` | `NVARCHAR(512)` | Có | — | Đường dẫn ảnh đại diện; NULL khi chưa có ảnh |
 | `Role` | `VARCHAR(10)` | Không | Mặc định `'User'` | Vai trò `'User'` hoặc `'Admin'` |
 | `IsDisabled` | `BIT` | Không | Mặc định `0` | `0`: hoạt động; `1`: bị khóa |
 | `CreatedAt` | `DATETIME2(3)` | Không | `SYSUTCDATETIME()` | Thời điểm tạo tài khoản |

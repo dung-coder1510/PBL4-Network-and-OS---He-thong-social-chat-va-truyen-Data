@@ -1,6 +1,6 @@
 # Frontend Nối
 
-Giao diện React cho đồ án PBL4 chat, gọi thoại và truyền tệp 1–1. Bản hiện tại dùng dữ liệu mẫu để hoàn thiện bố cục và luồng thao tác trước khi nối API.
+Giao diện React cho đồ án PBL4 chat, gọi thoại và truyền tệp 1–1. Đăng ký, đăng nhập và đăng xuất đã nối REST API với backend .NET và SQL Server.
 
 ## Chạy giao diện
 
@@ -22,5 +22,8 @@ npm run build
 
 - Có các màn hình trò chuyện, danh bạ, cuộc gọi, tệp, quản trị và cài đặt.
 - Nền sáng là mặc định; lựa chọn nền tối được lưu trong `localStorage`.
-- Tin nhắn gửi trong giao diện chỉ tồn tại trong bộ nhớ trình duyệt.
-- Chưa có xác thực, SignalR, WebRTC hoặc dữ liệu thật từ backend.
+- Token nằm trong bộ nhớ React; tải lại trang phải đăng nhập lại.
+- Hồ sơ hiển thị thông tin thật từ backend. Chat/danh bạ/cuộc gọi/tệp đang hiển thị trạng thái trống, chờ nối API nghiệp vụ.
+- Các trang mẫu cũ vẫn giữ trong source; chưa có kết nối SignalR hoặc WebRTC.
+
+Xem [hướng dẫn xác thực](../docs/authentication.md) để chạy backend, cấu hình database có sẵn và kiểm thử.
