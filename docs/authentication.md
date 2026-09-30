@@ -91,9 +91,10 @@ AuthPage xử lý form đăng ký/đăng nhập, authApi đóng gói HTTP, App g
 và xử lý đăng xuất. Các trang vẫn là file riêng. Profile hiển thị tên và username
 thật từ DB ở chế độ chỉ đọc. User thường không có mục Quản trị.
 
-Sau đăng nhập, các trang chat/danh bạ/cuộc gọi/tệp hiển thị trạng thái trống.
-Các component giao diện mẫu cũ vẫn giữ trong source, chưa nối với dữ liệu thật.
-SignalR, WebRTC, cập nhật hồ sơ và upload avatar nằm ngoài phần triển khai này.
+Sau đăng nhập, trang chat dùng [module cuộc trò chuyện](conversations.md):
+tìm người, tạo/mở cuộc trò chuyện, gửi/nhận SignalR và tải lịch sử từ DB.
+Danh bạ/cuộc gọi/tệp chưa nối API. WebRTC, cập nhật hồ sơ và upload avatar
+chưa được triển khai.
 
 ## Kiểm thử
 

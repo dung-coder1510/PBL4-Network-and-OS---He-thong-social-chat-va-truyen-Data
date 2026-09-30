@@ -11,14 +11,16 @@ Bản thiết kế dựa trên README bạn cung cấp: chat, gọi thoại và 
 
 ## Quyết định quan trọng
 
-- Server lưu bản sao **tất cả tin nhắn text** để phục vụ lịch sử và tin offline. Bản này chốt một điểm còn bỏ ngỏ trong README: chỉ lưu tin offline sẽ không có đủ lịch sử các tin P2P.
+- Web ↔ Web lưu text trên server; Web ↔ Desktop lưu server và SQLite desktop; Desktop ↔ Desktop lưu local, chỉ lên server khi đồng bộ thủ công hoặc bật tự động sao lưu. Xem [chính sách kiến trúc](../docs/architecture-storage-policy.md). Nhánh chat Web ↔ Web qua SignalR đã được triển khai; các nhánh desktop còn là đặc tả.
 - File và âm thanh đi qua WebRTC; DB chỉ lưu metadata và trạng thái. Không có chức năng tải lại file từ server.
-- `Contacts` là danh bạ một chiều. Đồng bộ từng thiết bị, chat nhóm và quy trình kết bạn nằm ngoài bản này.
-- Backend đã đăng ký `AppDbContext` với SQL Server. Các API nghiệp vụ vẫn chưa được triển khai.
+- `Contacts` là danh bạ một chiều. Schema hiện tại chỉ là phía server; SQLite, ID mapping và import lịch sử desktop cần thiết kế tiếp. Chat nhóm và quy trình kết bạn chưa thuộc phạm vi.
+- Backend đã có auth, tìm người dùng, conversation, ChatHub và API lịch sử Messages. WebRTC, desktop và đồng bộ chưa được triển khai.
 
-## Tạo database phát triển
+## Database hiện tại và môi trường thử nghiệm mới
 
-Trong SSMS, kết nối SQL Server của bạn, tạo một database mới, ví dụ `PBL4_Realtime`, rồi chọn database đó để chạy `01_schema.sql`.
+Dự án đã có database **PBL4**. Không tạo lại DB hoặc chạy lại `01_schema.sql` trên database này. Bước 0 chỉ cập nhật tài liệu; thay đổi schema sau này dùng migration riêng sau khi đối chiếu dữ liệu hiện có.
+
+Các lệnh bên dưới chỉ dành cho môi trường trống, độc lập: tạo một database mới, ví dụ `PBL4_Realtime`, rồi chạy `01_schema.sql`.
 
 Hoặc dùng `sqlcmd` với Windows Authentication; thay server và tên database cho đúng máy:
 
@@ -53,7 +55,7 @@ Script dừng nếu database hoặc file test đã tồn tại. Dữ liệu test
 - Tạo thành công **7 bảng và 5 trigger**, bao gồm `Role`, `AdminAuditLogs` và trigger bảo vệ nhật ký.
 - **78/78 kiểm tra đạt**, bao gồm kiểm tra `Role`, tính hợp lệ và tính bất biến của `AdminAuditLogs`, cùng các ràng buộc chat, file và cuộc gọi.
 - Chạy thành công cả 6 truy vấn mẫu; kết quả nằm trong `tests/.local/query-results.txt`.
-- Đã kiểm tra cú pháp PowerShell của runner. Chưa kiểm thử tích hợp EF Core, API phân quyền hay luồng WebRTC vì các phần đó chưa được triển khai trong backend.
+- Đã kiểm tra cú pháp PowerShell của runner. Kết quả kiểm thử schema trong mục này không chứng minh các API, WebRTC hoặc đồng bộ đã hoạt động. Hiện có auth và conversation; WebRTC và sync còn cần triển khai và kiểm thử riêng.
 
 ## Khi nối EF Core
 

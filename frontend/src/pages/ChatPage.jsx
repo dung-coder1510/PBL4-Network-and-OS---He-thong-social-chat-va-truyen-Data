@@ -1,156 +1,434 @@
-import { useLayoutEffect, useRef, useState } from 'react'
-import Avatar from '../components/Avatar.jsx'
-import Icon from '../components/Icon.jsx'
-import { CONVERSATIONS, FILES, PEOPLE } from '../data/mockData.js'
+import { useEffect, useRef, useState } from 'react'
+import ConversationList from '../components/chat/ConversationList.jsx'
+import ConversationThread from '../components/chat/ConversationThread.jsx'
+import NewConversationDialog from '../components/chat/NewConversationDialog.jsx'
+import { conversationsApi } from '../services/conversationsApi.js'
+import {
+  acknowledgeDelivered, createChatConnection, listenForMessages,
+  listenForMessageStatuses, listenForPresence, listenForTyping, markAsRead,
+  sendMessage, setTyping as sendTypingState, startChatConnection, stopChatConnection,
+} from '../services/chatConnection.js'
+import {
+  applyMessageStatus, applyPresence, createClientMessageId, upsertConversationMessage,
+} from '../utils/chatState.js'
+import '../styles/conversations.css'
 
-function lastPreview(personId, messages) {
-  const last = (messages[personId] || []).at(-1)
-  if (!last) return 'Bắt đầu cuộc trò chuyện'
-  if (last.fileId) return '📎 Tệp đính kèm'
-  return `${last.self ? 'Bạn: ' : ''}${last.text.split('\n')[0]}`
+function messageKey(message) {
+  return `${message.senderId}:${message.clientMessageId}`
 }
 
-function FileBubble({ fileId, onNavigate }) {
-  const file = FILES.find((item) => item.id === fileId)
-  if (!file) return null
-
-  return (
-    <div className="file-bubble">
-      <div className="file-head">
-        <span className={`file-thumb${file.type === 'PDF' ? ' file-thumb--pdf' : ''}`}><Icon name="file" /></span>
-        <div><div className="file-name">{file.name}</div><div className="file-size">{file.size} · {file.type}</div></div>
-      </div>
-      <div className="file-foot">
-        <span className="file-status-ok">Đã nhận · SHA-256 ✓</span>
-        <button type="button" onClick={() => onNavigate('files')}>Tải xuống</button>
-      </div>
-    </div>
-  )
-}
-
-function ConversationList({ filter, messages, onFilterChange, onQueryChange, onSelect, query, selectedId }) {
-  const filtered = CONVERSATIONS.filter((conversation) => {
-    const person = PEOPLE.find((item) => item.id === conversation.id)
-    const matchesFilter = filter === 'all' || conversation.unread > 0
-    return matchesFilter && person.name.toLowerCase().includes(query.toLowerCase())
+function mergeMessages(current, additions) {
+  const byKey = new Map(current.map(message => [messageKey(message), message]))
+  for (const message of additions) {
+    const old = byKey.get(messageKey(message))
+    byKey.set(messageKey(message), { ...old, ...message })
+  }
+  return [...byKey.values()].sort((a, b) => {
+    const byTime = Date.parse(a.createdAt) - Date.parse(b.createdAt)
+    return byTime || messageKey(a).localeCompare(messageKey(b))
   })
-
-  return (
-    <aside className="conv-list" aria-label="Cuộc trò chuyện">
-      <div className="conv-list-header">
-        <div className="conv-list-title"><h2>Trò chuyện</h2><button className="icon-btn" type="button" aria-label="Cuộc trò chuyện mới"><Icon name="edit" /></button></div>
-        <label className="field-wrap"><Icon name="search" /><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Tìm kiếm…" aria-label="Tìm cuộc trò chuyện" /></label>
-        <div className="tabs conv-tabs">
-          <button className={`tab${filter === 'all' ? ' active' : ''}`} type="button" onClick={() => onFilterChange('all')}>Tất cả</button>
-          <button className={`tab${filter === 'unread' ? ' active' : ''}`} type="button" onClick={() => onFilterChange('unread')}>Chưa đọc <span className="tab-count">2</span></button>
-        </div>
-      </div>
-      <div className="conv-items">
-        {filtered.map((conversation) => {
-          const person = PEOPLE.find((item) => item.id === conversation.id)
-          return (
-            <button className={`conv-item${selectedId === person.id ? ' selected' : ''}`} type="button" key={person.id} onClick={() => onSelect(person.id)}>
-              <Avatar person={person} size="sm" />
-              <span className="conv-body">
-                <span className="conv-row1"><span className="conv-name">{person.name.split(' ').slice(-2).join(' ')}</span><time className="conv-time">{conversation.time}</time></span>
-                <span className="conv-preview">{lastPreview(person.id, messages)}</span>
-              </span>
-              {conversation.unread ? <span className="unread-badge">{conversation.unread}</span> : null}
-            </button>
-          )
-        })}
-      </div>
-      <div className="conv-footer"><Icon name="chat" /> Dữ liệu mẫu · Không kết nối mạng</div>
-    </aside>
-  )
 }
 
-function ContactInfo({ onClose, onNavigate, person }) {
-  const sharedFiles = FILES.filter((file) => file.owner === person.id)
-  return (
-    <aside className="info-panel" aria-label="Thông tin liên hệ">
-      <div className="info-top"><button className="icon-btn" type="button" onClick={onClose} aria-label="Đóng"><Icon name="close" /></button></div>
-      <div className="info-hero">
-        <Avatar person={person} size="xl" />
-        <div className="info-hero-name">{person.name}</div>
-        <div className="info-hero-sub">@{person.username}</div>
-        <div className="info-quick">
-          <button className="info-quick-btn" type="button"><span className="info-quick-icon"><Icon name="phone" size="ico-sm" /></span>Gọi thoại</button>
-          <button className="info-quick-btn" type="button"><span className="info-quick-icon"><Icon name="search" size="ico-sm" /></span>Tìm kiếm</button>
-          <button className="info-quick-btn" type="button"><span className="info-quick-icon"><Icon name="paperclip" size="ico-sm" /></span>Gửi file</button>
-        </div>
-      </div>
-      <div className="info-section">
-        <div className="info-section-title">Chi tiết</div>
-        <div className="info-kv">Tên đầy đủ<strong>{person.name}</strong></div>
-        <div className="info-kv">Trạng thái<strong>{person.online ? 'Đang hoạt động' : 'Ngoại tuyến'}</strong></div>
-        <div className="info-kv">Vai trò<strong>{person.role}</strong></div>
-      </div>
-      <div className="info-section">
-        <div className="info-section-title">Tệp đã chia sẻ<button type="button" onClick={() => onNavigate('files')}>Xem tất cả</button></div>
-        {sharedFiles.map((file) => <div className="info-file" key={file.id}><span className="file-thumb"><Icon name="file" size="ico-sm" /></span><div><div className="file-name">{file.name}</div><div className="file-size">{file.size}</div></div></div>)}
-      </div>
-    </aside>
-  )
+function isAuthenticationError(error) {
+  return error?.statusCode === 401 || /\b401\b|unauthenticated/i.test(error?.message || '')
 }
 
-function ChatPage({ messages, onNavigate, onSelect, onSend, selectedId }) {
-  const [filter, setFilter] = useState('all')
+export default function ChatPage({ token, user, initialConversationId,
+  onInitialConversationHandled, onSessionExpired }) {
+  const [items, setItems] = useState([])
+  const itemsRef = useRef([])
   const [query, setQuery] = useState('')
-  const [draft, setDraft] = useState('')
-  const [showInfo, setShowInfo] = useState(() => window.innerWidth >= 1100)
-  const messagesRef = useRef(null)
-  const person = PEOPLE.find((item) => item.id === selectedId) || PEOPLE[0]
-  const conversationMessages = messages[selectedId] || []
+  const queryRef = useRef('')
+  const [cursor, setCursor] = useState(null)
+  const [nextCursor, setNextCursor] = useState(null)
+  const [revision, setRevision] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [selectedId, setSelectedId] = useState(null)
+  const selectedIdRef = useRef(null)
+  const [conversation, setConversation] = useState(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState('')
+  const [detailRevision, setDetailRevision] = useState(0)
+  const [messages, setMessages] = useState([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState('')
+  const [historyBefore, setHistoryBefore] = useState(null)
+  const [nextHistoryCursor, setNextHistoryCursor] = useState(null)
+  const [historyRevision, setHistoryRevision] = useState(0)
+  const [connectionState, setConnectionState] = useState('connecting')
+  const [connectionError, setConnectionError] = useState('')
+  const [connectionRevision, setConnectionRevision] = useState(0)
+  const connectionRef = useRef(null)
+  const lastReadRequestRef = useRef(null)
+  const typingActiveRef = useRef(false)
+  const typingConversationRef = useRef(null)
+  const typingStopTimerRef = useRef(null)
+  const peerTypingTimerRef = useRef(null)
+  const [peerTyping, setPeerTyping] = useState(false)
+  const [visibilityRevision, setVisibilityRevision] = useState(0)
+  const [showCreate, setShowCreate] = useState(false)
+  const [showList, setShowList] = useState(true)
 
-  useLayoutEffect(() => {
-    const messageList = messagesRef.current
-    if (messageList) messageList.scrollTop = messageList.scrollHeight
-  }, [selectedId, conversationMessages.length])
+  function changeItems(updater) {
+    setItems(current => {
+      const next = updater(current)
+      itemsRef.current = next
+      return next
+    })
+  }
 
-  function submitMessage(event) {
-    event.preventDefault()
-    const content = draft.trim()
-    if (!content) return
-    onSend(content)
-    setDraft('')
+  useEffect(() => {
+    const changed = () => setVisibilityRevision(value => value + 1)
+    document.addEventListener('visibilitychange', changed)
+    return () => document.removeEventListener('visibilitychange', changed)
+  }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const timer = setTimeout(async () => {
+      try {
+        const page = await conversationsApi.list(token, {
+          search: query.trim(), beforeId: cursor,
+        }, controller.signal)
+        if (!controller.signal.aborted) {
+          changeItems(current => cursor
+            ? [...current, ...page.items.filter(item => !current.some(old => old.id === item.id))]
+            : page.items)
+          setNextCursor(page.nextCursor)
+        }
+      } catch (failure) {
+        if (!controller.signal.aborted) {
+          if (failure.status === 401) onSessionExpired()
+          else setError(failure.message)
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false)
+      }
+    }, cursor ? 0 : 250)
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [token, query, cursor, revision, onSessionExpired])
+
+  useEffect(() => {
+    if (!selectedId) return undefined
+    const controller = new AbortController()
+    conversationsApi.get(token, selectedId, controller.signal).then(result => {
+      if (!controller.signal.aborted) setConversation(result)
+    }).catch(failure => {
+      if (!controller.signal.aborted) {
+        if (failure.status === 401) onSessionExpired()
+        else setDetailError(failure.message)
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) setDetailLoading(false)
+    })
+    return () => controller.abort()
+  }, [token, selectedId, detailRevision, onSessionExpired])
+
+  useEffect(() => {
+    if (!selectedId) return undefined
+    const controller = new AbortController()
+    conversationsApi.messages(token, selectedId, { beforeId: historyBefore }, controller.signal)
+      .then(page => {
+        if (controller.signal.aborted) return
+        setMessages(current => mergeMessages(page.items, current))
+        setNextHistoryCursor(page.nextCursor)
+      }).catch(failure => {
+        if (controller.signal.aborted) return
+        if (failure.status === 401) onSessionExpired()
+        else setHistoryError(failure.message)
+      }).finally(() => {
+        if (!controller.signal.aborted) setHistoryLoading(false)
+      })
+    return () => controller.abort()
+  }, [token, selectedId, historyBefore, historyRevision, onSessionExpired])
+
+  useEffect(() => {
+    let disposed = false
+    const loadingConversations = new Set()
+    const connection = createChatConnection(token, {
+      onReconnecting: () => { if (!disposed) setConnectionState('connecting') },
+      onReconnected: () => {
+        if (disposed) return
+        setConnectionState('connected')
+        setConnectionError('')
+        setLoading(true)
+        setError('')
+        changeItems(() => [])
+        setCursor(null)
+        setNextCursor(null)
+        setRevision(value => value + 1)
+        setHistoryLoading(Boolean(selectedIdRef.current))
+        setHistoryBefore(null)
+        setHistoryRevision(value => value + 1)
+        lastReadRequestRef.current = null
+      },
+      onClosed: failure => {
+        if (disposed) return
+        setConnectionState('disconnected')
+        if (isAuthenticationError(failure)) onSessionExpired()
+        else setConnectionError('Kết nối tin nhắn đã ngắt. Bạn hãy kết nối lại.')
+      },
+    })
+    connectionRef.current = connection
+
+    const removeMessageListener = listenForMessages(connection, message => {
+      const received = { ...message, sendState: 'sent' }
+      const active = selectedIdRef.current === message.conversationId &&
+        document.visibilityState === 'visible'
+      const knownConversation = itemsRef.current.some(item => item.id === message.conversationId)
+      changeItems(current => upsertConversationMessage(current, received, null, {
+        currentUserId: user.id, isActive: active,
+      }))
+
+      if (!knownConversation && !queryRef.current.trim() &&
+          !loadingConversations.has(message.conversationId)) {
+        loadingConversations.add(message.conversationId)
+        conversationsApi.get(token, message.conversationId).then(result => {
+          if (disposed) return
+          changeItems(current => upsertConversationMessage(
+            current, result.lastMessage || received, result,
+            { currentUserId: user.id, isActive: active, fromSnapshot: true }))
+        }).catch(failure => {
+          if (!disposed && failure.status === 401) onSessionExpired()
+        }).finally(() => loadingConversations.delete(message.conversationId))
+      }
+
+      if (message.senderId !== user.id)
+        void acknowledgeDelivered(connection, message.conversationId, message.id).catch(() => {})
+      if (selectedIdRef.current === message.conversationId)
+        setMessages(current => mergeMessages(current, [received]))
+    })
+
+    const removeStatusListener = listenForMessageStatuses(connection, status => {
+      setMessages(current => applyMessageStatus(current, status))
+      changeItems(current => current.map(item => {
+        if (item.id !== status.conversationId) return item
+        const lastMessage = item.lastMessage
+          ? applyMessageStatus([item.lastMessage], status)[0] : null
+        return {
+          ...item,
+          lastMessage,
+          unreadCount: status.readAt && status.recipientUserId === user.id
+            ? 0 : item.unreadCount,
+        }
+      }))
+    })
+
+    const removePresenceListener = listenForPresence(connection, status => {
+      changeItems(current => applyPresence(current, status))
+      setConversation(current => current?.peer.id === status.userId
+        ? { ...current, peer: { ...current.peer, ...status } } : current)
+    })
+
+    const removeTypingListener = listenForTyping(connection, status => {
+      if (status.userId === user.id || status.conversationId !== selectedIdRef.current) return
+      clearTimeout(peerTypingTimerRef.current)
+      setPeerTyping(status.isTyping)
+      if (status.isTyping)
+        peerTypingTimerRef.current = setTimeout(() => setPeerTyping(false), 4000)
+    })
+
+    startChatConnection(connection).then(() => {
+      if (disposed) return
+      setConnectionState('connected')
+      // Bù khoảng trống giữa lần tải REST đầu tiên và lúc Hub bắt đầu nhận event.
+      setLoading(true)
+      setRevision(value => value + 1)
+    }).catch(failure => {
+      if (disposed) return
+      setConnectionState('disconnected')
+      if (isAuthenticationError(failure)) onSessionExpired()
+      else setConnectionError('Không mở được kết nối tin nhắn. Kiểm tra server rồi thử lại.')
+    })
+    return () => {
+      disposed = true
+      clearTimeout(peerTypingTimerRef.current)
+      clearTimeout(typingStopTimerRef.current)
+      removeMessageListener()
+      removeStatusListener()
+      removePresenceListener()
+      removeTypingListener()
+      if (connectionRef.current === connection) connectionRef.current = null
+      void stopChatConnection(connection)
+    }
+  }, [token, connectionRevision, onSessionExpired, user.id])
+
+  useEffect(() => {
+    if (!selectedId || connectionState !== 'connected' ||
+        document.visibilityState !== 'visible') return
+    const latestIncoming = messages.findLast(message =>
+      message.senderId !== user.id && /^\d+$/.test(String(message.id)))
+    if (!latestIncoming?.id || latestIncoming.readAt) return
+    const requestKey = `${selectedId}:${latestIncoming.id}`
+    if (lastReadRequestRef.current === requestKey) return
+    lastReadRequestRef.current = requestKey
+    markAsRead(connectionRef.current, selectedId, latestIncoming.id).catch(() => {
+      if (lastReadRequestRef.current === requestKey) lastReadRequestRef.current = null
+    })
+  }, [messages, selectedId, connectionState, visibilityRevision, user.id])
+
+  useEffect(() => {
+    if (initialConversationId && selectedIdRef.current !== initialConversationId) {
+      select(initialConversationId)
+      onInitialConversationHandled?.()
+    }
+  }, [initialConversationId, onInitialConversationHandled])
+
+  function refresh() {
+    setLoading(true)
+    setError('')
+    changeItems(() => [])
+    setCursor(null)
+    setNextCursor(null)
+    setRevision(value => value + 1)
+  }
+
+  function search(value) {
+    setLoading(true)
+    setError('')
+    changeItems(() => [])
+    queryRef.current = value
+    setQuery(value)
+    setCursor(null)
+    setNextCursor(null)
+  }
+
+  function stopTyping() {
+    clearTimeout(typingStopTimerRef.current)
+    if (!typingActiveRef.current) return
+    const connection = connectionRef.current
+    const conversationId = typingConversationRef.current
+    typingActiveRef.current = false
+    typingConversationRef.current = null
+    if (connection?.state === 'Connected' && conversationId)
+      void sendTypingState(connection, conversationId, false).catch(() => {})
+  }
+
+  function typingChanged(isTyping) {
+    const connection = connectionRef.current
+    if (!selectedIdRef.current || connectionState !== 'connected' || !connection) return
+    clearTimeout(typingStopTimerRef.current)
+    if (!isTyping) {
+      stopTyping()
+      return
+    }
+    if (!typingActiveRef.current || typingConversationRef.current !== selectedIdRef.current) {
+      typingActiveRef.current = true
+      typingConversationRef.current = selectedIdRef.current
+      void sendTypingState(connection, selectedIdRef.current, true).catch(() => {})
+    }
+    typingStopTimerRef.current = setTimeout(stopTyping, 2500)
+  }
+
+  function select(id) {
+    stopTyping()
+    selectedIdRef.current = id
+    lastReadRequestRef.current = null
+    setSelectedId(id)
+    setPeerTyping(false)
+    changeItems(current => current.map(item => item.id === id
+      ? { ...item, unreadCount: 0 } : item))
+    setShowList(false)
+    setDetailLoading(true)
+    setDetailError('')
+    setConversation(null)
+    setMessages([])
+    setHistoryLoading(true)
+    setHistoryBefore(null)
+    setNextHistoryCursor(null)
+    setHistoryError('')
+    setHistoryRevision(value => value + 1)
+    setDetailRevision(value => value + 1)
+  }
+
+  function retryDetail() {
+    setDetailLoading(true)
+    setDetailError('')
+    setConversation(null)
+    setDetailRevision(value => value + 1)
+  }
+
+  function loadMore() {
+    if (loading || !nextCursor) return
+    setLoading(true)
+    setError('')
+    setCursor(nextCursor)
+  }
+
+  function created(result) {
+    setShowCreate(false)
+    setQuery('')
+    queryRef.current = ''
+    refresh()
+    select(result.id)
+  }
+
+  function retryHistory() {
+    setHistoryLoading(true)
+    setHistoryError('')
+    setHistoryRevision(value => value + 1)
+  }
+
+  function loadOlderMessages() {
+    if (!nextHistoryCursor || historyLoading) return
+    setHistoryLoading(true)
+    setHistoryError('')
+    setHistoryBefore(nextHistoryCursor)
+  }
+
+  function reconnect() {
+    setConnectionState('connecting')
+    setConnectionError('')
+    setConnectionRevision(value => value + 1)
+  }
+
+  async function submitMessage(content, existingClientMessageId) {
+    const connection = connectionRef.current
+    if (!selectedId || !connection || connectionState !== 'connected')
+      throw new Error('Kết nối tin nhắn chưa sẵn sàng.')
+
+    const clientMessageId = existingClientMessageId || createClientMessageId()
+    const optimistic = {
+      id: `local:${clientMessageId}`, clientMessageId, conversationId: selectedId,
+      senderId: user.id, content, createdAt: new Date().toISOString(), sendState: 'sending',
+      deliveredAt: null, readAt: null,
+    }
+    setMessages(current => mergeMessages(current, [optimistic]))
+    try {
+      const saved = await sendMessage(connection, {
+        conversationId: selectedId, clientMessageId, content,
+      })
+      setMessages(current => mergeMessages(current, [{ ...saved, sendState: 'sent' }]))
+      changeItems(current => upsertConversationMessage(current, saved, conversation, {
+        currentUserId: user.id, isActive: true,
+      }))
+      return saved
+    } catch (failure) {
+      setMessages(current => current.map(message =>
+        messageKey(message) === messageKey(optimistic) && String(message.id).startsWith('local:')
+          ? { ...message, sendState: 'failed', error: failure.message } : message))
+      throw failure
+    }
   }
 
   return (
-    <div className={`chat-layout${showInfo ? ' show-info' : ''}`}>
-      <ConversationList filter={filter} messages={messages} onFilterChange={setFilter} onQueryChange={setQuery} onSelect={onSelect} query={query} selectedId={selectedId} />
-      <section className="thread" aria-label={`Cuộc trò chuyện với ${person.name}`}>
-        <header className="thread-header">
-          <Avatar person={person} />
-          <div className="thread-person"><div className="thread-name">{person.name}</div><div className={`thread-status${person.online ? '' : ' offline'}`}><span className="status-dot" />{person.online ? 'Đang hoạt động' : 'Hoạt động hôm qua'}</div></div>
-          <div className="thread-actions">
-            <button className="btn" type="button"><Icon name="phone" size="ico-sm" /><span>Gọi thoại</span></button>
-            <button className={`icon-btn${showInfo ? ' active' : ''}`} type="button" onClick={() => setShowInfo((current) => !current)} aria-label="Thông tin"><Icon name="info" /></button>
-          </div>
-        </header>
-        <div className="messages" ref={messagesRef} role="log" aria-live="polite">
-          <div className="date-chip"><span>Hôm nay</span></div>
-          {conversationMessages.map((message) => (
-            <div className={`msg${message.self ? ' self' : ''}`} key={message.id}>
-              {!message.self ? <Avatar person={person} size="sm" /> : null}
-              <div className="bubble-wrap">
-                {message.fileId ? <FileBubble fileId={message.fileId} onNavigate={onNavigate} /> : <div className="bubble">{message.text}</div>}
-                <div className="msg-meta"><time>{message.time}</time>{message.self ? <><Icon name="check" size="ico-sm" /><span>Đã đọc</span></> : null}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="composer-wrap">
-          <form className="composer" onSubmit={submitMessage}>
-            <textarea value={draft} onChange={(event) => setDraft(event.target.value)} aria-label="Soạn tin nhắn" placeholder={`Nhắn gì đó cho ${person.name.split(' ').at(-1)}…`} />
-            <div className="composer-bottom"><div className="composer-tools"><button className="icon-btn" type="button" aria-label="Đính kèm file"><Icon name="paperclip" /></button><button className="icon-btn" type="button" aria-label="Biểu tượng cảm xúc"><Icon name="smile" /></button></div><button className="send-btn" type="submit" aria-label="Gửi"><Icon name="send" /></button></div>
-          </form>
-          <div className="composer-hint">Enter để gửi · Shift + Enter để xuống dòng</div>
-        </div>
-      </section>
-      {showInfo ? <ContactInfo onClose={() => setShowInfo(false)} onNavigate={onNavigate} person={person} /> : null}
+    <div className={`chat-layout live-chat${showList ? ' show-conv' : ''}`}>
+      <ConversationList items={items} query={query} onQueryChange={search} loading={loading}
+        error={error} currentUserId={user.id} selectedId={selectedId} onSelect={select}
+        onCreate={() => setShowCreate(true)} onRefresh={refresh} hasMore={Boolean(nextCursor)}
+        onLoadMore={loadMore} />
+      <ConversationThread conversation={conversation} loading={detailLoading} error={detailError}
+        messages={messages} currentUserId={user.id} historyLoading={historyLoading}
+        historyError={historyError} hasOlder={Boolean(nextHistoryCursor)}
+        connectionState={connectionState} connectionError={connectionError}
+        peerTyping={peerTyping} onTypingChange={typingChanged} onBack={() => setShowList(true)}
+        onRetry={retryDetail} onRetryHistory={retryHistory} onLoadOlder={loadOlderMessages}
+        onSend={submitMessage} onRetryMessage={message =>
+          submitMessage(message.content, message.clientMessageId)}
+        onReconnect={reconnect} onCreate={() => setShowCreate(true)} />
+      {showCreate && <NewConversationDialog token={token} onClose={() => setShowCreate(false)}
+        onCreated={created} onSessionExpired={onSessionExpired} />}
     </div>
   )
 }
-
-export default ChatPage

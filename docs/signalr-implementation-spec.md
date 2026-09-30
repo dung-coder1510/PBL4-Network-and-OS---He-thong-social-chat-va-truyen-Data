@@ -1,12 +1,14 @@
 # Đặc tả triển khai hệ thống chat PBL4 với ASP.NET Core SignalR
 
-Ngày: 27/09/2026. Phiên bản: 1.0 — thiết kế đề xuất để triển khai.
+Ngày: 30/09/2026. Phiên bản: 1.1 — cập nhật chính sách LAN, lưu trữ và đồng bộ.
 
 Nhóm: Nguyễn Hoàng Dũng, Nguyễn Hoàng Duy, Nguyễn Thành Trung.
 
-Công nghệ bám theo mã nguồn: ASP.NET Core **.NET 10**, EF Core, SQL Server, React + JavaScript; WebRTC cho đường truyền P2P. Đây là tài liệu thiết kế, **chưa phải các chức năng đã được lập trình**. Các đoạn code là hợp đồng và mẫu triển khai có chú thích; những service, store, adapter được nhắc tới phải được xây dựng theo đặc tả.
+Công nghệ bám theo mã nguồn: ASP.NET Core **.NET 10**, EF Core, SQL Server, React + JavaScript; WebRTC cho đường truyền P2P. Bước 1–2 đã được lập trình: chat web qua SignalR, lưu/lịch sử SQL, ACK/read, unread, retry chống trùng, presence/typing, reconnect và danh bạ. Signaling WebRTC, call/file, desktop và sync vẫn là thiết kế. Đoạn code ở các phần tương lai là hợp đồng/mẫu, không phải toàn bộ chức năng đã chạy.
 
 ## Cách đọc
+
+Đọc [kiến trúc kết nối và lưu trữ](architecture-storage-policy.md) trước. Các DTO, Hub và ví dụ JS ở đây mô tả **nhánh có server quản lý**, đặc biệt chat web. Chúng không phải điều kiện để hai desktop gửi tin LAN. Giao thức local, SQLite và import lịch sử được tách trong tài liệu kiến trúc; chưa có trong code.
 
 Đọc mục 1–4 để hiểu nghiệp vụ. Mục 5–8 là hợp đồng backend; mục 9–12 là frontend và cách nối hai phía; mục 13–16 là quy tắc triển khai, kiểm thử và lộ trình. Chưa cần học WebRTC trước khi hoàn thành luồng chat SignalR đầu tiên.
 
@@ -18,21 +20,23 @@ Tra nhanh: [nghiệp vụ](#nghiep-vu) · [DTO](#dto) · [ChatHub](#chat-hub) ·
 
 | Thành phần | Hiện trạng | Công việc tiếp theo |
 |---|---|---|
-| Backend | Target `net10.0`, đăng ký DbContext SQL Server, controllers và OpenAPI | Thêm xác thực, phân quyền, service nghiệp vụ, SignalR |
+| Backend | Target `net10.0`, EF/SQL Server, JWT/session, MessageService, receipt/presence và ChatHub | Thêm signaling WebRTC |
 | Model | Có Users, Contacts, DirectConversations, Messages, Calls, FileTransfers, AdminAuditLogs | Đối chiếu mapping EF với script SQL trước khi tạo migration |
-| Controller | Chỉ thấy controller WeatherForecast mẫu | Xây các controller REST trong mục 8 |
-| SignalR | Chưa có Hub, chưa `AddSignalR`/`MapHub` | Xây ChatHub và SignalingHub |
-| React | Trang đã tách; chat cập nhật React state từ mock data | Thay mock bằng API, realtime store và handler |
-| Đăng nhập | `authenticated = true` trong giao diện mẫu | Thay bằng phiên xác thực thật |
-| JavaScript SignalR | Chưa có `@microsoft/signalr` trong dependencies | Thêm client tương thích .NET 10 khi triển khai |
+| Controller | Đã có Users, Sessions, Conversations và GET lịch sử Messages | Xây Contacts và phần nghiệp vụ còn lại trong mục 8 |
+| SignalR | ChatHub strongly typed tại `/hubs/chat`: text, receipt, presence và typing | Xây SignalingHub |
+| React | Auth, conversation, danh bạ, trạng thái chat, reconnect và lịch sử thật | Thêm WebRTC |
+| Đăng nhập | Đã có đăng ký/đăng nhập/đăng xuất; token giữ trong bộ nhớ | Xác thực Hub; thiết kế danh tính thiết bị cho LAN sau này |
+| JavaScript SignalR | Có `@microsoft/signalr`; hàm connection/listener/invoke đã tách nhóm | Bổ sung resync hoàn chỉnh ở bước 2 |
 
-DB hiện có lưu **bản sao tất cả tin nhắn text**, kể cả tin truyền P2P; file và âm thanh không lưu trên server. Vì vậy bản thiết kế này không tuyên bố text P2P loại bỏ hoàn toàn tải server hoặc có mã hóa đầu cuối. Server vẫn biết nội dung text để phục vụ lịch sử. Thiết kế DB đã có lựa chọn này trong [database/README.md](../database/README.md).
+Schema hiện có bảng `Messages`; ChatHub đã lưu tin Web ↔ Web và REST tải lại lịch sử. Quy tắc toàn hệ thống: Web ↔ Web lưu server; Web ↔ Desktop lưu server và SQLite desktop; Desktop ↔ Desktop lưu local, chỉ đưa lên server khi đồng bộ thủ công hoặc bật tự động sao lưu. Server đọc được bản text đã lưu; thiết kế này không tuyên bố mã hóa đầu cuối cho bản sao đó. File/audio không nằm trong SQL.
 
 <a id="nghiep-vu"></a>
 
 ## 2. Hiểu nghiệp vụ bằng một cuộc trò chuyện
 
 ### 2.1. Dũng gửi “14h họp nhóm nha” cho Trung
+
+Ví dụ này là Web ↔ Web qua SignalR ở bước chat đầu tiên. Sau đó thêm WebRTC; luồng Desktop ↔ Desktop LAN dùng local outbox và không cần commit server.
 
 1. Dũng đăng nhập. Backend xác thực và trả token, thông tin tài khoản.
 2. Frontend mở kết nối `ChatHub` bằng token. Server nhận biết đây là Dũng qua claim, không tin một `senderId` do JS tự gửi.
@@ -68,9 +72,11 @@ Kết quả `invoke` và event có thể tới khác thứ tự minh họa. Fron
 
 ### 2.2. Khi Trung offline
 
+Đoạn dưới áp dụng chế độ lưu lịch sử server. Với tin Desktop ↔ Desktop local-only, người gửi giữ outbox trên máy và chờ peer; không tự upload vì peer offline.
+
 Dũng vẫn gửi và server vẫn lưu. Tin ở trạng thái **Đã gửi**, chưa có `DeliveredAt`. Khi Trung quay lại, frontend kết nối Hub trước, rồi tải những tin chưa nhận qua REST. Sau khi đưa dữ liệu vào store mới gửi ACK. Hub không tự cất event để phát lại khi người dùng online.
 
-### 2.3. Bốn khái niệm rất dễ nhầm
+### 2.3. Các khái niệm rất dễ nhầm
 
 | Khái niệm | Ví dụ | Ý nghĩa |
 |---|---|---|
@@ -78,12 +84,17 @@ Dũng vẫn gửi và server vẫn lưu. Tin ở trạng thái **Đã gửi**, c
 | ConnectionId | chuỗi do SignalR sinh | Một kết nối của một tab/app; reconnect có thể đổi |
 | ConversationId | `"125"` | Cuộc trò chuyện lâu dài của hai tài khoản, lưu trong DB |
 | PeerSessionId | UUID | Một phiên thiết lập WebRTC giữa hai endpoint, có thời hạn |
+| DeviceId / EndpointId | ID thiết bị / phiên | Phân biệt thiết bị lâu dài và endpoint đang kết nối |
+| ClientKind | web hoặc desktop | Khả năng của endpoint, không phải thuộc tính cố định của Users |
+| LocalConversationId | UUID | ID local trước khi ánh xạ với ConversationId server |
 
 Dũng có thể mở web và desktop: một UserId nhưng nhiều ConnectionId. Đóng rồi mở lại app vẫn là cùng ConversationId. Tạo lại đường truyền WebRTC sinh PeerSessionId khác.
 
 `UserAID = min(user1, user2)` và `UserBID = max(user1, user2)` chỉ chuẩn hóa cặp người tham gia. A không có nghĩa là người gửi. Người gửi từng tin nằm ở `Messages.SenderId`.
 
 ### 2.4. Trạng thái hiển thị phải có bằng chứng
+
+Bảng sau áp dụng luồng lưu server. Ở LAN, lưu SQLite và ACK peer cung cấp bằng chứng gửi/nhận; trạng thái cloud (chỉ trên máy/chờ đồng bộ/đã đồng bộ/lỗi) được theo dõi riêng. Upload không tự đánh dấu đã nhận hoặc đã đọc.
 
 | Trạng thái UI | Bằng chứng |
 |---|---|
@@ -98,11 +109,13 @@ Dũng có thể mở web và desktop: một UserId nhưng nhiều ConnectionId. 
 
 ## 3. Phạm vi và những quyết định triển khai
 
-MVP gồm đăng ký/đăng nhập, danh bạ một chiều, chat 1–1, lịch sử và tin offline, online/offline, đang nhập, gọi thoại, truyền file, admin khóa/mở tài khoản và audit log. Chưa xây chat nhóm, kết bạn có phê duyệt, video call, sửa/xóa tin và đồng bộ offline hoàn chỉnh theo từng thiết bị.
+MVP gồm đăng ký/đăng nhập, danh bạ một chiều, chat 1–1, lịch sử theo chính sách endpoint, presence/typing, gọi thoại, truyền file, desktop LAN/SQLite, upload lịch sử thủ công/tự động, admin và audit log. Chưa xây chat nhóm, kết bạn có phê duyệt, video call, sửa/xóa tin hoặc đồng bộ hai chiều hoàn chỉnh mọi thiết bị.
 
 Một user vẫn được mở nhiều tab. Bản MVP xử lý fan-out, chống trùng, tranh chấp nhận cuộc gọi; receipt được hiểu theo **tài khoản**, không phải từng thiết bị. Muốn biết desktop đã nhận nhưng web chưa nhận cần thêm bảng receipt theo thiết bị.
 
-Chọn hai Hub cho dự án này. Đây là quyết định tổ chức mã, không phải yêu cầu SignalR bắt buộc phải có hai Hub.
+Fan-out đến nhiều tab chỉ áp dụng dữ liệu được phép lưu server. Tin LAN local-only không tự chuyển sang web cùng tài khoản. Các lệnh call/file qua Hub bên dưới dành cho phiên server quản lý; LAN dùng điều khiển peer và metadata local.
+
+Chọn hai Hub cho nhánh server của dự án này. Đây là quyết định tổ chức mã, không phải yêu cầu SignalR bắt buộc phải có hai Hub.
 
 | Hub | Route | Nhiệm vụ |
 |---|---|---|
@@ -130,11 +143,11 @@ flowchart LR
     D <-.-> T
 ```
 
-WebRTC cần kênh signaling để trao đổi SDP/ICE; trong dự án này chọn SignalR làm kênh đó. Các candidate ICE nhận sớm phải được đợi tới sau `setRemoteDescription` mới đưa vào peer connection. [MDN: signaling WebRTC](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Signaling_and_video_calling).
+WebRTC cần kênh signaling để trao đổi SDP/ICE: chọn SignalR cho nhánh qua server; hai desktop LAN trao đổi signaling local sau khi xác thực peer. Sơ đồ trên minh họa nhánh có server. Các candidate ICE nhận sớm phải được đợi tới sau `setRemoteDescription` mới đưa vào peer connection. [MDN: signaling WebRTC](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Signaling_and_video_calling).
 
 ### 3.2. Thứ tự xây dựng
 
-Giai đoạn 1: text đi qua SignalR để hoàn thành nghiệp vụ lưu, nhận, đọc, offline. Giai đoạn 2: thêm lựa chọn text đi P2P nhưng giữ bản sao server theo DB đã chọn. Gọi thoại và byte file luôn đi WebRTC trong phạm vi thiết kế cuối cùng.
+Xây chat web qua SignalR trước để hoàn thành lưu/nhận/đọc/offline. Sau đó thêm WebRTC nhưng vẫn giữ bản sao server cho các cặp có web. Tiếp theo xây desktop LAN/SQLite rồi upload thủ công/tự động. Gọi thoại và byte file dùng WebRTC. Lộ trình bước 0–8 ở mục 16.
 
 ## 4. Hợp đồng chung giữa frontend và backend
 
@@ -664,6 +677,8 @@ Không cho admin tự khóa chính mình; bảo vệ admin cuối cùng. Request
 <a id="javascript"></a>
 
 ## 9. Phân loại frontend đúng ba nhóm
+
+Mẫu JS sau dành cho React web và phiên có server. Không dùng handler mất SignalR để đóng một phiên LAN độc lập trên desktop. Desktop cần adapter local riêng, vẫn tách quản lý đường truyền, lắng nghe sự kiện và chủ động gửi lệnh.
 
 | Nhóm | Câu hỏi để phân loại | Ví dụ |
 |---|---|---|
@@ -1205,7 +1220,7 @@ Server gọi MessageReceived → handler nhóm 2 upsert store → React render. 
 
 Khi prepend lịch sử cũ, giữ vị trí bằng chênh lệch scrollHeight hoặc anchor message. Đừng cuộn xuống cuối vì số lượng tin tăng trong trường hợp tải tin cũ. Logic useLayoutEffect theo message count ở bản UI hiện tại cần điều chỉnh khi thêm phân trang thật.
 
-### 10.4. Text P2P ở giai đoạn 2
+### 10.4. Text P2P có web tham gia
 
 1. Hai thiết bị đã có PeerSession purpose=data và DataChannel open; nếu chưa có thì dùng route=server.
 2. Sender gọi SendMessage route=peer để server lưu; nhận MessageDto chuẩn.
@@ -1214,7 +1229,7 @@ Khi prepend lịch sử cũ, giữ vị trí bằng chênh lệch scrollHeight h
 5. MessageAvailable đặt timer 2 giây. Nếu thiếu payload, receiver GET đúng message từ server. Nếu sender phát hiện DataChannel đóng, retry SendMessage route=server với cùng UUID. Cả hai cơ chế có thể cùng chạy nên dedupe bắt buộc.
 6. Trước khi dùng metadata nhạy cảm hoặc khi peer payload mâu thuẫn, lấy bản chuẩn REST; không cho peer tự gán receipt/CreatedAt trong store authoritative. Có thể hiển thị payload peer tạm và reconcile REST nền để chống peer giả message ID/content. ACK chỉ sau xác nhận bản ghi tồn tại và khớp sender/conversation.
 
-Ở giai đoạn này text vẫn đi lên server một lần để lưu; P2P là đường truyền ưu tiên tới peer, không phải hệ thống server “không bao giờ thấy text”. Nếu yêu cầu P2P hoạt động cả khi server mất hẳn, cần thêm mô hình tin local chưa commit, outbox đồng bộ và giải quyết xung đột; ngoài MVP này.
+Luồng trên giữ text trên server vì có web tham gia. Desktop ↔ Desktop là nhánh khác: ghi SQLite/outbox → gửi envelope với ClientMessageId qua peer → receiver lưu và ACK local. Không gọi SendMessage trước khi gửi LAN. Chỉ upload qua pipeline đồng bộ riêng khi người dùng yêu cầu/bật backup; fallback chuyển tiếp local-only không được dùng lệnh ghi Messages. Xem [luồng local và đồng bộ](architecture-storage-policy.md).
 
 ### 10.5. Gọi thoại
 
@@ -1236,7 +1251,9 @@ Nút “Tải xuống” chỉ hoạt động nếu thiết bị còn Blob/file 
 
 <a id="dong-bo"></a>
 
-## 11. Đồng bộ sau mất mạng: phần chat nào cũng cần
+## 11. Khôi phục phiên có server sau mất mạng
+
+Resync ở đây là tải lại trạng thái từ server, khác upload lịch sử SQLite. Hai desktop LAN tiếp tục dùng outbox/ACK local; không bị khóa gửi chỉ vì cờ `ready` của SignalR là false. Upload thủ công/tự động cần batch ACK riêng như tài liệu kiến trúc.
 
 ### 11.1. Thuật toán resynchronize(kind, signal)
 
@@ -1363,6 +1380,8 @@ Với WebSocket/SSE trong trình duyệt, access token có thể đi qua query s
 
 ## 13. Đối chiếu database và thay đổi cần thiết
 
+Bảng dưới là kho server, chỉ lưu text theo chính sách endpoint. Cần thiết kế thêm SQLite, ID mapping, danh tính thiết bị/bằng chứng nguồn tin và metadata import trước khi xây sync. Không thêm cột ClientType cố định vào Users. Chưa có migration cho các phần mới.
+
 | Dữ liệu | Nơi lưu | Ghi chú triển khai |
 |---|---|---|
 | Account và quyền | Users | Unique username; password hash; IsDisabled; RowVersion |
@@ -1405,15 +1424,17 @@ Giới hạn input ở server; authorization ở mỗi Hub method/REST action; s
 
 Log traceId, loại lệnh, resource ID nội bộ, duration, outcome và code lỗi; tránh payload riêng tư. Theo dõi active connections, tỷ lệ reconnect, độ trễ từ SendMessage đến ACK, duplicate/conflict count, lỗi call setup, hash mismatch, outbox backlog nếu có. Đặt mục tiêu thử nghiệm trong LAN: text ACK p95 < 1 giây, không duplicate trong 100 lần retry cưỡng bức; đây là mục tiêu kiểm thử, chưa phải kết quả hiện tại.
 
-Khi lỗi tăng, có thể tắt route peer text bằng feature flag và dùng server text, vẫn giữ ClientMessageId. Rollback app không được xóa lịch sử/audit. Migration cần backward-compatible khi rollout; backup DB trước migration có thay đổi schema.
+Với tin thuộc chế độ lưu server, khi lỗi tăng có thể tắt route peer text và dùng server text, giữ ClientMessageId. Tin LAN local-only chỉ chuyển tiếp không lưu hoặc chờ outbox; không dùng feature flag để tự bật cloud history. Rollback app không được xóa lịch sử/audit. Migration cần backward-compatible khi rollout; backup DB trước migration có thay đổi schema.
 
 ### 14.4. Cloud và desktop
 
 Ban đầu một ASP.NET Core instance + SQL Server là đủ cho demo. Khi scale ngang cần cơ chế phân phối event như Redis backplane hoặc Azure SignalR Service, đồng thời chuyển registry/session/busy sang kho dùng chung. Backplane không tự giải quyết state nghiệp vụ và không biến Hub thành hàng đợi bền vững. Cấu hình sticky session phụ thuộc phương án host/transport đã chọn. [Microsoft: SignalR hosting và scaling](https://learn.microsoft.com/en-us/aspnet/core/signalr/scale?view=aspnetcore-10.0).
 
-Desktop dùng cùng REST DTO và Hub contracts, qua .NET SignalR client. WPF cần thêm thư viện WebRTC riêng hoặc lớp web host có hỗ trợ WebRTC phù hợp; cài .NET SignalR client không tự cung cấp RTCPeerConnection, DataChannel hay microphone streaming.
+Desktop dùng REST DTO/Hub contracts qua .NET SignalR client khi tham gia nhánh có server; thêm discovery, signaling local, SQLite và sync service cho nhánh LAN độc lập. WPF cần thêm thư viện WebRTC riêng hoặc lớp web host có hỗ trợ WebRTC phù hợp; cài .NET SignalR client không tự cung cấp RTCPeerConnection, DataChannel hay microphone streaming.
 
 ## 15. Ma trận kiểm thử trước khi coi là xong
+
+Bảng này kiểm tra nhánh server. Bắt buộc bổ sung [ma trận ba cặp endpoint, LAN và sync](architecture-storage-policy.md#8-kiểm-thử-chấp-nhận-kiến-trúc), nhất là server tắt, backup tắt và upload trùng từ hai máy.
 
 | Tình huống | Kết quả phải đạt |
 |---|---|
@@ -1447,20 +1468,21 @@ Viết unit test state machine/idempotency và integration test với SQL Server
 
 | Chặng | Đầu việc | Điều kiện hoàn thành |
 |---|---|---|
-| 1. Nền tảng | Chốt schema; auth/session; Users, Sessions, Contacts, Conversations controllers | Hai user login, tạo/lấy cùng conversation đúng quyền |
-| 2. Chat chạy được | ChatHub: SendMessage, MessageReceived; Messages REST; nối ChatPage | Hai trình duyệt trao đổi tin thật, reload còn lịch sử |
-| 3. Chat đúng nghiệp vụ | ACK/read, pending, idempotency, typing/presence, reconnect | Vượt toàn bộ test chat/offline/đa tab cơ bản |
-| 4. WebRTC data | SignalingHub, endpoint claim, STUN/TURN, text peer + fallback | Gửi text khi trực tiếp được và khi phải fallback |
-| 5. Voice | State machine Calls, popup accept, media, mute, timeout | Gọi hai máy, hủy/từ chối/mất mạng đúng trạng thái |
-| 6. File | Metadata, accept, chunk/backpressure, SHA, cancel | File nhận đúng hash; lỗi/cancel dọn tài nguyên |
-| 7. Admin và tin cậy | Account-state REST, audit, thu hồi live session, outbox nếu cần | User bị khóa không thao tác/nhận dữ liệu; không mất dữ liệu khi restart |
-| 8. Desktop và demo | .NET client, lớp WebRTC desktop, deployment, quan sát lỗi | Demo Web ↔ Desktop và các tình huống mất mạng |
+| 0. Thống nhất đặc tả | README, kết nối, nơi lưu và đồng bộ | Ba cặp endpoint có quy tắc rõ ràng |
+| 1. Chat chạy được — hoàn thành | ChatHub, Messages REST và giao diện composer/lịch sử | Integration test xác nhận hai client trao đổi tin thật, reload còn lịch sử |
+| 2. Chat đúng nghiệp vụ | ACK/read, pending, chống trùng, typing/presence, reconnect, Contacts | Mất mạng/retry không trùng, quyền truy cập đúng |
+| 3. WebRTC data | SignalingHub, endpoint claim, STUN/TURN, text peer + fallback | Web P2P được; lịch sử vẫn lưu server |
+| 4. Voice | Calls, accept, media, mute, timeout | Gọi hai máy, hủy/từ chối/mất mạng đúng |
+| 5. File | Metadata, chunk/backpressure, SHA, cancel | File đúng hash; lỗi/cancel dọn tài nguyên |
+| 6. Desktop và LAN | WPF, WebRTC adapter, SQLite, danh tính thiết bị, discovery | Chat LAN khi server tắt; Web ↔ Desktop hoạt động |
+| 7. Đồng bộ và backup | Upload batch, kiểm chứng nguồn, dedupe, cài đặt | Upload từ hai máy/retry không trùng; backup tắt giữ local |
+| 8. Hoàn thiện | Admin/audit, độ tin cậy, kiểm thử, triển khai, báo cáo/demo | Kiểm thử đủ ba cặp endpoint và tình huống lỗi |
 
-Không ấn định số ngày khi chưa biết thời lượng nhóm dành mỗi tuần. Có thể chia người theo contracts/backend/frontend nhưng phải cùng chốt tên DTO/event trước; chặng 2 nên làm một lát cắt xuyên suốt frontend → Hub → DB → frontend trước khi chia toàn bộ tính năng.
+Không ấn định số ngày khi chưa biết thời lượng nhóm dành mỗi tuần. Có thể chia người theo contracts/backend/frontend nhưng phải cùng chốt tên DTO/event trước; bước 1 nên làm một lát cắt xuyên suốt frontend → Hub → DB → frontend trước khi chia toàn bộ tính năng.
 
 ## 17. Bài thực hành đầu tiên để hiểu chat
 
-Tạo hai tài khoản Dũng và Trung; mở hai browser context; xây POST sessions và POST conversations; viết SendMessage ở Hub; viết MessageReceived trong IChatClient; JS đăng ký onMessageReceived; lưu tin rồi phát cho đúng user. Dũng bấm Gửi và Trung thấy tin thật. Sau đó reload Trung vẫn thấy tin qua GET messages.
+Dùng hai tài khoản Dũng và Trung; mở hai browser context; dùng POST sessions và POST conversations đã có; viết SendMessage ở Hub; viết MessageReceived trong IChatClient; JS đăng ký onMessageReceived; lưu tin rồi phát cho đúng user. Dũng bấm Gửi và Trung thấy tin thật. Sau đó reload Trung vẫn thấy tin qua GET messages.
 
 Khi luồng này chạy, thêm ACK và đọc. Khi chat ổn mới thêm signaling. Phần khó của hệ thống chat không chỉ là đẩy một chuỗi từ A sang B: cần biết ai được gửi, thuộc cuộc trò chuyện nào, tin đã lưu chưa, người nhận đã nhận/đọc chưa, và làm sao mất mạng vẫn khôi phục đúng dữ liệu.
 

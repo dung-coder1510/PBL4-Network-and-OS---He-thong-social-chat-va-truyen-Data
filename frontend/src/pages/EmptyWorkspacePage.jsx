@@ -8,7 +8,7 @@ const PAGES = {
   admin: ['shield', 'Quản trị', 'Quản lý tài khoản', 'Chức năng quản trị đang được chuẩn bị.'],
 }
 
-// Chưa nối các API chat/danh bạ: không trình bày dữ liệu mock như dữ liệu tài khoản thật.
+// Các trang chưa có nghiệp vụ thật không trình bày dữ liệu mock như dữ liệu tài khoản thật.
 export default function EmptyWorkspacePage({ page, user }) {
   const [icon, title, heading, description] = PAGES[page] || PAGES.chat
   return (

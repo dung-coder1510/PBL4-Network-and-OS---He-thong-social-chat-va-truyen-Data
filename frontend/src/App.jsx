@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import AppShell from './components/layout/AppShell.jsx'
 import AuthPage from './pages/AuthPage.jsx'
 import EmptyWorkspacePage from './pages/EmptyWorkspacePage.jsx'
 import SettingsPage from './pages/SettingsPage.jsx'
+import ChatPage from './pages/ChatPage.jsx'
+import ContactsPage from './pages/ContactsPage.jsx'
 import { authApi } from './services/authApi.js'
 import './styles/app.css'
 
@@ -15,6 +17,11 @@ function App() {
   const [notice, setNotice] = useState('')
   const [loggingOut, setLoggingOut] = useState(false)
   const [logoutError, setLogoutError] = useState('')
+  const [openConversationId, setOpenConversationId] = useState(null)
+  const sessionExpired = useCallback(() => {
+    setSession(null)
+    setNotice('Phiên đăng nhập đã hết hạn hoặc bị thu hồi. Bạn đăng nhập lại nhé.')
+  }, [])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -104,6 +111,18 @@ function App() {
       {logoutError && <p className="auth-workspace-error" role="alert">{logoutError}</p>}
       {visiblePage === 'settings'
         ? <SettingsPage onThemeChange={setTheme} theme={theme} user={session.user} />
+        : visiblePage === 'contacts'
+        ? <ContactsPage token={session.accessToken} userId={session.user.id}
+            onSessionExpired={sessionExpired}
+            onOpenConversation={conversationId => {
+              setOpenConversationId(conversationId)
+              navigate('chat')
+            }} />
+        : visiblePage === 'chat'
+        ? <ChatPage key={session.sessionId} token={session.accessToken} user={session.user}
+            initialConversationId={openConversationId}
+            onInitialConversationHandled={() => setOpenConversationId(null)}
+            onSessionExpired={sessionExpired} />
         : <EmptyWorkspacePage page={visiblePage} user={session.user} />}
     </AppShell>
   )

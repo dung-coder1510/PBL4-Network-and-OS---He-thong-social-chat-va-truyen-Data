@@ -1,0 +1,48 @@
+.chat-layout.live-chat { min-width: 0; min-height: 0; grid-template-columns: minmax(230px, var(--conv-w)) minmax(0, 1fr); }
+.live-chat .conv-list, .live-chat .conv-items { min-width: 0; }
+.live-chat .conv-preview, .conversation-username { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-username { font-size: 11px; color: var(--text-2); }
+.conversation-feedback { padding: 20px 12px; color: var(--text-2); font-size: 13px; overflow-wrap: anywhere; }
+.conversation-feedback .btn { margin-top: 12px; }
+.conversation-more { margin: 12px auto; display: flex; }
+.conversation-thread-body { flex: 1; min-height: 0; overflow: auto; display: grid; place-items: center; padding: 28px; text-align: center; }
+.conversation-thread-body > [role="alert"] .btn { margin-top: 12px; }
+.conversation-welcome { display: flex; align-items: center; flex-direction: column; gap: 12px; max-width: 420px; overflow-wrap: anywhere; min-width: 0; }
+.conversation-welcome h2 { font-size: 20px; }
+.conversation-welcome p { color: var(--text-2); font-size: 13px; }
+.conversation-welcome .avatar { flex-shrink: 0; }
+.conversation-welcome--messages { margin: auto; }
+.conversation-older { margin: 0 auto 12px; flex-shrink: 0; }
+.chat-connection-state { overflow: hidden; color: var(--text-2); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.chat-connection-state.connected { color: var(--green); }
+.chat-connection-state.disconnected { color: var(--red); }
+.composer-alert { margin-bottom: 8px; color: var(--red); font-size: 12px; overflow-wrap: anywhere; }
+.composer-alert button, .message-retry { color: var(--accent); font: inherit; font-weight: 700; }
+.composer-count { color: var(--text-3); font-size: 10px; }
+.send-btn:disabled { cursor: not-allowed; opacity: .45; }
+.message-retry { margin-left: 3px; }
+.conversation-composer-note { display: flex; justify-content: center; align-items: center; gap: 10px; padding: 20px; background: var(--surface); border-top: 1px solid var(--border); color: var(--text-2); font-size: 12px; }
+.contact-alias-editor { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.contact-alias-editor input { width: min(220px, 100%); }
+.contact-alias-editor .btn { padding: 6px 10px; }
+.new-conversation-dialog { margin: auto; width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg); }
+.new-conversation-dialog::backdrop { background: rgb(15 23 42 / 45%); }
+.new-conversation-heading { display: flex; gap: 12px; justify-content: space-between; align-items: center; }
+.new-conversation-heading h2 { font-size: 18px; }
+.new-conversation-dialog form > p { margin: 12px 0 16px; font-size: 13px; color: var(--text-2); }
+.conversation-search-results { min-height: 120px; max-height: 320px; overflow-y: auto; margin: 16px 0; }
+.conversation-search-results > p, .conversation-search-results [role="alert"] { padding: 12px 4px; color: var(--text-2); font-size: 13px; }
+.conversation-search-results [role="alert"] .btn { margin-top: 12px; }
+.conversation-person { display: flex; align-items: center; width: 100%; gap: 12px; padding: 12px; border: 1px solid transparent; border-radius: var(--radius); text-align: left; }
+.conversation-person:hover { background: var(--surface-2); }
+.conversation-person.selected { background: var(--accent-soft); border-color: var(--accent); }
+.conversation-person > span:nth-child(2) { min-width: 0; flex: 1; }
+.conversation-person strong, .conversation-person small { display: block; overflow-wrap: anywhere; }
+.conversation-person small { color: var(--text-2); }
+.new-conversation-actions { display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid var(--border); padding-top: 16px; }
+@media (max-width: 900px) {
+  .chat-layout.live-chat { grid-template-columns: minmax(0, 1fr); }
+  .live-chat .thread-header { padding: 12px; height: auto; min-height: 60px; gap: 8px; }
+  .conversation-thread-body { padding: 20px 16px; }
+  .conversation-composer-note { padding: 16px; }
+}

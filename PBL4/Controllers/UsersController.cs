@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
+using System.ComponentModel.DataAnnotations;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Data.SqlClient;
@@ -7,13 +9,38 @@ using PBL4.Auth;
 using PBL4.Contracts;
 using PBL4.Data;
 using PBL4.Models;
+using PBL4.Realtime;
 
 namespace PBL4.Controllers;
 
 [ApiController]
 [Route("api/v1/users")]
-public sealed class UsersController(AppDbContext db, PasswordService passwords) : ControllerBase
+public sealed class UsersController(AppDbContext db, PasswordService passwords,
+    PresenceTracker presence) : ControllerBase
 {
+    /// <summary>Tìm tối đa 20 người đang hoạt động; bỏ qua chính mình. Không trả toàn bộ danh bạ khi query rỗng.</summary>
+    [HttpGet, Authorize]
+    public async Task<ActionResult<IReadOnlyList<ConversationUserDto>>> Search(
+        [FromQuery, StringLength(100)] string? search, CancellationToken ct)
+    {
+        var term = search?.Trim() ?? "";
+        if (term.Length < 2) return Ok(Array.Empty<ConversationUserDto>());
+        var userId = int.Parse(User.FindFirstValue("sub")!);
+        var users = await db.Users.AsNoTracking()
+            .Where(u => u.Id != userId && !u.IsDisabled &&
+                (u.Username.Contains(term) || u.DisplayName.Contains(term)))
+            .OrderBy(u => u.Username).ThenBy(u => u.Id).Take(20)
+            .Select(u => new ConversationUserDto(u.Id, u.Username, u.DisplayName,
+                u.AvatarPath, u.IsDisabled, false, u.LastSeenAt))
+            .ToListAsync(ct);
+        return Ok(users.Select(user => user with
+        {
+            IsOnline = presence.IsOnline(user.Id),
+            LastSeenAt = user.LastSeenAt.HasValue
+                ? DateTime.SpecifyKind(user.LastSeenAt.Value, DateTimeKind.Utc) : null
+        }).ToList());
+    }
+
     /// <summary>Tạo tài khoản User; không nhận Role/IsDisabled/AvatarPath từ request.</summary>
     [HttpPost, AllowAnonymous, EnableRateLimiting("auth")]
     [RequestSizeLimit(8192)]

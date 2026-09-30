@@ -1,5 +1,7 @@
 # Thiết kế database cho PBL4
 
+Xem [quy tắc kết nối, lưu trữ và đồng bộ](architecture-storage-policy.md) cập nhật ngày 30/09/2026. Tài liệu này mô tả schema **server**; SQLite và đồng bộ desktop là phần cần thiết kế/triển khai tiếp, chưa có trong code.
+
 ## 1. Mục tiêu và nhận xét thiết kế ban đầu
 
 Thiết kế này dùng SQL Server 2022 trở lên, phù hợp backend ASP.NET Core + EF Core.
@@ -16,20 +18,23 @@ Bốn bảng ban đầu đủ mô tả ý tưởng, nhưng chưa đủ quy tắc
 | FileTransfers | Không lưu bytes file vào DB | SHA-256; mốc chấp nhận/kết thúc; phân biệt thất bại, từ chối, hủy |
 
 Hai bảng bổ sung là **DirectConversations** để gom lịch sử của một cặp người và **Calls** để lưu kết quả cuộc gọi.
-Không cần thiết kế sẵn phòng nhóm, bảng chunk hay hệ thống đồng bộ từng thiết bị cho MVP.
+Không thiết kế phòng nhóm hoặc bảng chunk trong SQL. Đồng bộ lịch sử desktop lên server thuộc phạm vi mới; đồng bộ hai chiều đầy đủ mọi thiết bị là bước mở rộng.
 
 ## 2. Các quyết định phạm vi
 
-### 2.1. Lưu bản sao mọi tin nhắn text trên server
+### 2.1. Lưu text theo endpoint tham gia
 
-Nếu chỉ lưu tin offline, server sẽ không biết nội dung các tin đã đi hoàn toàn qua P2P.
-Khi đó tính năng lịch sử trên server không thể trả về toàn bộ cuộc trò chuyện.
-Thiết kế này chọn **đăng ký và lưu text trên server trước, sau đó gửi realtime qua WebRTC DataChannel**.
+| Trường hợp | Lưu lịch sử |
+|---|---|
+| Web ↔ Web | SQL Server |
+| Web ↔ Desktop | SQL Server và SQLite trên desktop |
+| Desktop ↔ Desktop | SQLite trên hai máy; chỉ lưu server khi đồng bộ thủ công hoặc bật tự động sao lưu |
 
-Server vì vậy lưu nội dung text, metadata và hỗ trợ giao lại tin chưa được xác nhận.
-P2P vẫn là đường truyền realtime ưu tiên giữa hai client; audio và bytes file không đi vào database.
-Đây là lựa chọn phục vụ lịch sử và độ tin cậy, đồng thời làm tăng lưu lượng lưu trữ text trên server.
-Nó phụ thuộc server khi bắt đầu gửi tin; gửi text hoàn toàn không có server không thuộc baseline này.
+Luồng có web đăng ký và lưu text trên server trước, rồi ưu tiên gửi qua WebRTC.
+Desktop ↔ Desktop LAN lưu local rồi gửi trực tiếp, không chờ ID từ server.
+Khi sync, ánh xạ conversation theo cặp UserAID/UserBID và chống trùng theo
+(SenderId, ClientMessageId). Chuyển tiếp qua server không tự bật lưu lịch sử.
+Audio và bytes file không lưu SQL; đồng bộ text không bao gồm upload file.
 
 ### 2.2. Danh bạ và cuộc trò chuyện
 
@@ -42,6 +47,8 @@ Nó phụ thuộc server khi bắt đầu gửi tin; gửi text hoàn toàn khô
 
 ### 2.3. Dữ liệu lâu dài và dữ liệu tạm thời
 
+Bảng dưới áp dụng cho các phiên do server quản lý. Tin text chỉ ghi SQL theo chính sách ở mục 2.1; metadata call/file LAN lưu local và không cần API server trước khi bắt đầu.
+
 | Lưu trong SQL Server | Giữ trong bộ nhớ server/client |
 |---|---|
 | Tài khoản, danh bạ, cuộc trò chuyện | SignalR ConnectionId và tập kết nối đang hoạt động |
@@ -49,7 +56,7 @@ Nó phụ thuộc server khi bắt đầu gửi tin; gửi text hoàn toàn khô
 | Metadata và kết quả truyền file | Bytes file, chunks, bộ đệm, tốc độ và tiến độ truyền |
 | Metadata và kết quả gọi thoại | Audio, trạng thái microphone tức thời |
 
-Online khi tài khoản còn ít nhất một kết nối đang hoạt động; không dùng một cột IsOnline làm nguồn sự thật.
+Presence server báo online khi tài khoản còn ít nhất một kết nối server hoạt động; khả năng liên lạc LAN được theo dõi riêng. Không dùng một cột IsOnline làm nguồn sự thật.
 LastSeenAt là thông tin tham khảo về lần cuối hoạt động, không chứng minh người đó đang online.
 
 ## 3. Sơ đồ quan hệ
@@ -183,6 +190,8 @@ Thời lượng phiên đã trả lời tính từ AnsweredAt đến EndedAt, kh
 
 ## 5. Luồng gửi text và ACK
 
+Luồng dưới đây áp dụng Web ↔ Web và Web ↔ Desktop có lưu server. Desktop ↔ Desktop local-only dùng outbox/ACK local theo tài liệu kiến trúc, không gọi API này trước khi gửi.
+
 1. Client tạo ClientMessageId một lần và giữ cùng nội dung/cùng người nhận khi retry.
 2. Client gọi API; server lấy SenderId từ danh tính đăng nhập, kiểm tra thành viên và lưu Messages.
 3. Nếu khóa chống trùng đã tồn tại, API so sánh conversation và nội dung: giống thì trả dòng cũ, khác thì từ chối.
@@ -260,7 +269,7 @@ Các ví dụ truy vấn nằm trong `database/02_queries.sql`; schema nằm tro
 
 ## 9. MVP và hướng phát triển
 
-**MVP:** sáu bảng trên; text có bản sao server; ACK theo người nhận; file trực tiếp và checksum; call metadata.
+**Schema cơ sở trong tài liệu này:** sáu bảng; bản có Admin bổ sung `AdminAuditLogs`, thành bảy bảng. Text lưu server theo chính sách endpoint; ACK theo người nhận; file trực tiếp và checksum; call metadata của phiên server quản lý. Schema này chưa bao gồm SQLite và dữ liệu phục vụ import desktop.
 Trạng thái đã nhận/đã đọc được lưu theo tài khoản, không theo từng thiết bị; chưa bảo đảm mỗi thiết bị nhận đủ tin.
 JWT có thể dùng cho xác thực; database hiện chưa có cơ chế refresh-token rotation hoặc thu hồi từng phiên.
 Nếu triển khai đăng xuất/thu hồi JWT, backend phải nêu rõ hành vi thay vì cho rằng schema này đã giải quyết.

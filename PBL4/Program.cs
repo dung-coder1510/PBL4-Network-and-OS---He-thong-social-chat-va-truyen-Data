@@ -1,7 +1,10 @@
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.SignalR;
 using PBL4.Data;
 using PBL4.Auth;
+using PBL4.Realtime;
+using PBL4.Services;
 
 namespace PBL4
 {
@@ -20,12 +23,19 @@ namespace PBL4
                 options.AddPolicy("AllowReactApp",
                     policy => policy.WithOrigins("http://localhost:5173", "http://127.0.0.1:5173")
                                     .AllowAnyMethod()
-                                    .AllowAnyHeader());
+                                    .AllowAnyHeader()
+                                    .AllowCredentials());
             });
             builder.Services.AddDbContext<AppDbContext>(options =>
                 options.UseSqlServer(connectionString));
             builder.Services.AddControllers();
             builder.Services.AddPbl4Auth(builder.Configuration, builder.Environment);
+            builder.Services.AddSignalR();
+            builder.Services.AddScoped<MessageService>();
+            builder.Services.AddScoped<MessageReceiptService>();
+            builder.Services.AddSingleton<PresenceTracker>();
+            builder.Services.AddSingleton<TypingRateLimiter>();
+            builder.Services.AddSingleton<IUserIdProvider, SubClaimUserIdProvider>();
             // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
             builder.Services.AddOpenApi();
 
@@ -63,6 +73,8 @@ namespace PBL4
             app.UseAuthorization();
 
             app.MapControllers();
+            app.MapHub<ChatHub>("/hubs/chat", options =>
+                options.CloseOnAuthenticationExpiration = true);
 
             app.Run();
         }

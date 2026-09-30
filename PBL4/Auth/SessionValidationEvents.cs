@@ -8,6 +8,15 @@ namespace PBL4.Auth;
 // Chạy sau khi kiểm tra chữ ký/issuer/audience/expiry để kiểm tra thu hồi và account.
 public sealed class SessionValidationEvents(AppDbContext db, SessionRegistry sessions) : JwtBearerEvents
 {
+    public override Task MessageReceived(MessageReceivedContext context)
+    {
+        // Trình duyệt truyền token SignalR bằng query string khi WebSocket không đặt được header.
+        var token = context.Request.Query["access_token"];
+        if (!string.IsNullOrEmpty(token) && context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+            context.Token = token;
+        return Task.CompletedTask;
+    }
+
     public override async Task TokenValidated(TokenValidatedContext context)
     {
         var sub = context.Principal?.FindFirstValue("sub");

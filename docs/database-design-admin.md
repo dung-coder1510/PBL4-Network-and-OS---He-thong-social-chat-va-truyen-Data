@@ -3,6 +3,8 @@
 **Phạm vi:** Chat, gọi thoại và truyền file 1–1 theo mô hình P2P kết hợp server
 
 
+Xem [quy tắc kết nối, lưu trữ và đồng bộ](architecture-storage-policy.md) cập nhật ngày 30/09/2026. Tài liệu này mô tả schema **server**; SQLite và đồng bộ desktop là phần cần thiết kế/triển khai tiếp, chưa có trong code.
+
 ## 1. Tổng quan
 
 | STT | Bảng | Mục đích |
@@ -21,9 +23,9 @@ Admin là một tài khoản trong `Users` có `Role = 'Admin'`. Với hai vai t
 
 ### 2.1. Lưu text, file và âm thanh
 
-- Server lưu bản sao **mọi tin nhắn text** để hỗ trợ lịch sử và giao lại tin khi người nhận offline.
-- Client đăng ký tin với server trước, sau đó ưu tiên gửi realtime qua WebRTC DataChannel. Cách này phụ thuộc server khi bắt đầu gửi text.
-- Nếu chỉ lưu tin offline, server sẽ thiếu lịch sử của các tin đã đi hoàn toàn qua P2P; bản thiết kế này chọn lưu đầy đủ text.
+- Web ↔ Web lưu text trên server; Web ↔ Desktop lưu trên server và SQLite desktop.
+- Hai trường hợp có web lưu server trước rồi gửi realtime qua WebRTC DataChannel.
+- Desktop ↔ Desktop lưu SQLite hai máy; chỉ upload khi bấm đồng bộ hoặc bật tự động sao lưu. LAN không chờ server cấp ConversationId/MessageId; fallback qua server không tự bật lưu lịch sử.
 - Bytes file và âm thanh truyền qua WebRTC, có thể qua TURN khi cần relay. SQL chỉ giữ metadata và kết quả.
 - Không lưu file/chunk/audio, SDP, ICE candidate hoặc tiến độ truyền liên tục vào các bảng nghiệp vụ.
 - Server lưu được nội dung text nên bản thiết kế này chưa cung cấp mã hóa đầu cuối cho bản sao text trên server.
@@ -33,8 +35,8 @@ Admin là một tài khoản trong `Users` có `Role = 'Admin'`. Với hai vai t
 - `Contacts` là danh bạ **một chiều**: A thêm B không tự tạo dòng B thêm A.
 - Người dùng có thể trò chuyện mà chưa thêm nhau vào danh bạ.
 - Mỗi cặp người có tối đa một cuộc trò chuyện, được tạo khi bắt đầu trao đổi.
-- Online/offline được xác định từ tập kết nối SignalR đang hoạt động trong bộ nhớ server. `LastSeenAt` chỉ là mốc tham khảo.
-- ACK đã nhận/đã đọc áp dụng theo tài khoản; đồng bộ đầy đủ cho từng thiết bị nằm ngoài phạm vi hiện tại.
+- Presence server dựa trên tập kết nối SignalR. Khả năng liên lạc LAN theo dõi riêng; mất SignalR không đồng nghĩa mất kết nối LAN. `LastSeenAt` chỉ là mốc tham khảo.
+- Receipt server áp dụng theo tài khoản; ACK LAN và trạng thái đã sao lưu là hai thông tin riêng. Upload thủ công/tự động thuộc phạm vi mới; đồng bộ hai chiều đầy đủ từng thiết bị còn là mở rộng.
 
 ### 2.3. Phạm vi Admin và Log
 
@@ -69,6 +71,8 @@ erDiagram
 `AdminUserId` và `TargetUserId` đều tham chiếu `Users.Id`, nhưng mang hai ý nghĩa khác nhau. Một người có thể xuất hiện trong nhiều dòng nhật ký.
 
 ## 4. Quy ước chung
+
+Các kiểu ID/thời gian dưới đây là của SQL Server. Local DB dùng UUID và ID server nullable; không tự cấp IDENTITY hoặc giả timestamp server. Metadata call/file LAN nằm local; chưa bao gồm sao lưu các dữ liệu này lên server.
 
 - **PK:** khóa chính. **FK:** khóa ngoại. **UNIQUE:** giá trị hoặc bộ giá trị không được trùng.
 - `IDENTITY(1,1)`: ID số nguyên do database tự tăng; client không tự cấp các ID này.
@@ -281,6 +285,8 @@ Hai dòng là hai sự kiện lịch sử, nên được giữ nguyên. Trạng 
 Tài khoản đã bị khóa không được tiếp tục gọi API hoặc gửi signaling qua kết nối cũ; việc kiểm tra phải áp dụng cả cho các kết nối đã xác thực trước đó. Một kênh P2P đã thiết lập không tự bị cắt chỉ nhờ đổi cột DB: client cần xử lý thông báo khóa/đóng phiên. Server không bảo đảm chặn ngay bytes đang đi trực tiếp giữa hai client không tuân thủ.
 
 ### 6.3. Gửi text và xác nhận
+
+Luồng này áp dụng tin có web tham gia và lưu server. Desktop ↔ Desktop dùng SQLite/outbox/ACK local; khi upload lịch sử cần kiểm chứng nguồn gốc tin, không lấy người upload làm người gửi mọi tin.
 
 1. Client tạo ClientMessageId và đăng ký nội dung với server.
 2. Server lấy SenderId từ danh tính đăng nhập, kiểm tra quyền/thành viên và lưu tin.
