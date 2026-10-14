@@ -52,6 +52,7 @@ function connect(token) {
   connection.on('MessageStatusChanged', () => {})
   connection.on('PresenceChanged', () => {})
   connection.on('TypingChanged', () => {})
+  connection.on('ConversationChanged', () => {})
   hubs.push(connection)
   return connection
 }
@@ -110,6 +111,15 @@ try {
     assert.equal(receiverHub.state, signalR.HubConnectionState.Connected)
   })
 
+  const conversationChangedEvent = nextEvent(receiverHub, 'ConversationChanged')
+  const createdForReceiver = await api('/conversations', {
+    method: 'POST', token: tokens[2], body: { peerUserId: users[1].id },
+  })
+  assert.equal(createdForReceiver.status, 201)
+  const conversationChanged = await conversationChangedEvent
+  check('A newly created empty conversation is announced to the other online member', () =>
+    assert.equal(conversationChanged.conversationId, createdForReceiver.data.id))
+
   const clientMessageId = randomUUID()
   const receiverEvent = nextMessage(receiverHub)
   const sent = await senderHub.invoke('SendMessage', {
@@ -158,6 +168,16 @@ try {
     assert.equal(delivered.recipientUserId, users[1].id)
     assert.ok(delivered.deliveredAt.endsWith('Z'))
     assert.equal(delivered.readAt, null)
+  })
+
+  const repeatedDeliveredEvent = nextEvent(senderHub, 'MessageStatusChanged')
+  await receiverHub.invoke('AcknowledgeDelivered', {
+    conversationId, upToMessageId: sent.id,
+  })
+  const repeatedDelivered = await repeatedDeliveredEvent
+  check('Repeated delivery ACK returns the timestamp already stored in SQL', () => {
+    assert.equal(repeatedDelivered.deliveredAt, delivered.deliveredAt)
+    assert.equal(repeatedDelivered.readAt, null)
   })
 
   const readEvent = nextEvent(senderHub, 'MessageStatusChanged')
@@ -240,6 +260,43 @@ try {
     assert.equal(peer.isOnline, false)
     assert.ok(peer.lastSeenAt.endsWith('Z'))
   })
+
+  const pendingMessage = await senderHub.invoke('SendMessage', {
+    conversationId, clientMessageId: randomUUID(), content: 'Tin chờ receiver kết nối lại',
+  })
+  const pendingPage = await api('/users/me/pending-messages?limit=100', { token: tokens[1] })
+  check('Pending endpoint returns undelivered incoming messages for reconnect', () => {
+    assert.equal(pendingPage.status, 200)
+    assert.equal(pendingPage.data.items.some(message => message.id === pendingMessage.id), true)
+  })
+
+  const secondReceiverSession = await api('/sessions', {
+    method: 'POST', body: { username: names[1], password },
+  })
+  assert.equal(secondReceiverSession.status, 201)
+  const revokedReceiverHub = connect(secondReceiverSession.data.accessToken)
+  await revokedReceiverHub.start()
+  const revoked = await api('/sessions/current', {
+    method: 'DELETE', token: secondReceiverSession.data.accessToken,
+  })
+  assert.equal(revoked.status, 204)
+
+  await assert.rejects(() => revokedReceiverHub.invoke('StartTyping', { conversationId }))
+  const revokedReceivedMessage = nextEvent(revokedReceiverHub, 'MessageReceived', 700)
+    .then(() => true, () => false)
+  await senderHub.invoke('SendMessage', {
+    conversationId, clientMessageId: randomUUID(), content: 'Phiên đã thu hồi không được nhận',
+  })
+  const revokedSessionReceived = await revokedReceivedMessage
+  check('A revoked SignalR session cannot invoke Hub methods or receive private events', () =>
+    assert.equal(revokedSessionReceived, false))
+
+  sql(`UPDATE dbo.Users SET IsDisabled=1 WHERE Id=${users[1].id}`)
+  await assert.rejects(() => senderHub.invoke('SendMessage', {
+    conversationId, clientMessageId: randomUUID(), content: 'Không gửi cho tài khoản bị khóa',
+  }))
+  check('Cannot persist a new message for a disabled conversation peer', () =>
+    assert.equal(sql(`SELECT COUNT(*) FROM dbo.Messages WHERE ConversationId=${conversationId} AND Content=N'Không gửi cho tài khoản bị khóa'`), '0'))
 
   console.log(passed + ' checks passed.')
 } finally {

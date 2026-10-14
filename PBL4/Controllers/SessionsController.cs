@@ -7,13 +7,14 @@ using Microsoft.EntityFrameworkCore;
 using PBL4.Auth;
 using PBL4.Contracts;
 using PBL4.Data;
+using PBL4.Realtime;
 
 namespace PBL4.Controllers;
 
 [ApiController]
 [Route("api/v1/sessions")]
 public sealed class SessionsController(AppDbContext db, PasswordService passwords,
-    TokenService tokens, SessionRegistry sessions) : ControllerBase
+    TokenService tokens, SessionRegistry sessions, PresenceService presence) : ControllerBase
 {
     /// <summary>Kiểm tra mật khẩu, cấp JWT 30 phút; không phân biệt user sai/password sai.</summary>
     [HttpPost, AllowAnonymous, EnableRateLimiting("auth")]
@@ -49,9 +50,12 @@ public sealed class SessionsController(AppDbContext db, PasswordService password
 
     /// <summary>Thu hồi đúng sid đang gọi; những phiên khác của user vẫn hoạt động.</summary>
     [HttpDelete("current"), Authorize]
-    public IActionResult DeleteCurrent()
+    public async Task<IActionResult> DeleteCurrent(CancellationToken ct)
     {
-        sessions.Revoke(User.FindFirstValue("sid")!);
+        var sessionId = User.FindFirstValue("sid")!;
+        var userId = int.Parse(User.FindFirstValue("sub")!);
+        sessions.Revoke(sessionId);
+        await presence.RevokeSessionAsync(userId, sessionId, ct);
         return NoContent();
     }
 }

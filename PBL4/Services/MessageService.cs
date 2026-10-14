@@ -28,10 +28,19 @@ public sealed class MessageService(AppDbContext db)
         var conversation = await db.DirectConversations.AsNoTracking()
             .Where(c => c.Id == conversationId &&
                 (c.UserAID == senderId || c.UserBID == senderId))
-            .Select(c => new { c.Id, c.UserAID, c.UserBID })
+            .Select(c => new
+            {
+                c.Id,
+                c.UserAID,
+                c.UserBID,
+                PeerIsDisabled = c.UserAID == senderId
+                    ? c.UserB.IsDisabled : c.UserA.IsDisabled
+            })
             .SingleOrDefaultAsync(ct);
         if (conversation is null)
             throw new HubException("Không tìm thấy cuộc trò chuyện.");
+        if (conversation.PeerIsDisabled)
+            throw new HubException("Tài khoản người nhận hiện không khả dụng.");
 
         var existing = await db.Messages.AsNoTracking()
             .SingleOrDefaultAsync(m => m.SenderId == senderId &&

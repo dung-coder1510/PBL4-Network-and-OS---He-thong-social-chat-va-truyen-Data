@@ -11,7 +11,8 @@ namespace PBL4.Realtime;
 
 [Authorize]
 public sealed class ChatHub(MessageService messages, MessageReceiptService receipts,
-    AppDbContext db, PresenceTracker presence, TypingRateLimiter typingLimiter) : Hub<IChatClient>
+    AppDbContext db, PresenceTracker presence, PresenceService presenceService,
+    TypingRateLimiter typingLimiter) : Hub<IChatClient>
 {
     private int CurrentUserId => int.Parse(Context.User!.FindFirstValue("sub")!,
         CultureInfo.InvariantCulture);
@@ -22,10 +23,9 @@ public sealed class ChatHub(MessageService messages, MessageReceiptService recei
         var saved = await messages.SaveAsync(senderId, request, Context.ConnectionAborted);
 
         // Phát cả các tab của người gửi và người nhận. Frontend upsert theo ClientMessageId.
-        await Clients.Users([
-            senderId.ToString(CultureInfo.InvariantCulture),
-            saved.PeerUserId.ToString(CultureInfo.InvariantCulture)
-        ]).MessageReceived(saved.Message);
+        var connectionIds = presence.GetValidConnectionIds([senderId, saved.PeerUserId]);
+        if (connectionIds.Count > 0)
+            await Clients.Clients(connectionIds).MessageReceived(saved.Message);
         return saved.Message;
     }
 
@@ -50,8 +50,9 @@ public sealed class ChatHub(MessageService messages, MessageReceiptService recei
     public override async Task OnConnectedAsync()
     {
         var userId = CurrentUserId;
-        if (presence.Connect(userId, Context.ConnectionId))
-            await NotifyPresence(userId, true, null, Context.ConnectionAborted);
+        var sessionId = Context.User!.FindFirstValue("sid")!;
+        if (presence.Connect(userId, sessionId, Context.ConnectionId))
+            await presenceService.NotifyOnlineAsync(userId, Context.ConnectionAborted);
         await base.OnConnectedAsync();
     }
 
@@ -59,19 +60,18 @@ public sealed class ChatHub(MessageService messages, MessageReceiptService recei
     {
         var userId = CurrentUserId;
         if (presence.Disconnect(userId, Context.ConnectionId))
-        {
-            var lastSeenAt = DateTime.UtcNow;
-            await db.Users.Where(u => u.Id == userId)
-                .ExecuteUpdateAsync(setters => setters.SetProperty(u => u.LastSeenAt, lastSeenAt));
-            await NotifyPresence(userId, false, lastSeenAt, CancellationToken.None);
-        }
+            await presenceService.NotifyDisconnectedAsync(userId, CancellationToken.None);
         await base.OnDisconnectedAsync(exception);
     }
 
-    private Task NotifyReceipt(SavedReceipt saved) => Clients.Users([
-        saved.SenderUserId.ToString(CultureInfo.InvariantCulture),
-        saved.Status.RecipientUserId.ToString(CultureInfo.InvariantCulture)
-    ]).MessageStatusChanged(saved.Status);
+    private Task NotifyReceipt(SavedReceipt saved)
+    {
+        var connectionIds = presence.GetValidConnectionIds([
+            saved.SenderUserId, saved.Status.RecipientUserId
+        ]);
+        return connectionIds.Count == 0 ? Task.CompletedTask
+            : Clients.Clients(connectionIds).MessageStatusChanged(saved.Status);
+    }
 
     private async Task SetTyping(TypingRequestDto request, bool isTyping)
     {
@@ -87,24 +87,9 @@ public sealed class ChatHub(MessageService messages, MessageReceiptService recei
         if (peerId == 0) throw new HubException("Không tìm thấy cuộc trò chuyện.");
         if (isTyping && !typingLimiter.AllowStart(userId, conversationId)) return;
         if (!isTyping) typingLimiter.Stop(userId, conversationId);
-        await Clients.User(peerId.ToString(CultureInfo.InvariantCulture))
-            .TypingChanged(new TypingStateDto(request.ConversationId, userId, isTyping));
-    }
-
-    private async Task NotifyPresence(int userId, bool isOnline, DateTime? lastSeenAt,
-        CancellationToken ct)
-    {
-        var peers = await db.DirectConversations.AsNoTracking()
-            .Where(c => c.UserAID == userId || c.UserBID == userId)
-            .Select(c => c.UserAID == userId ? c.UserBID : c.UserAID)
-            .Concat(db.Contacts.AsNoTracking().Where(c => c.UserId == userId)
-                .Select(c => c.ContactUserId))
-            .Concat(db.Contacts.AsNoTracking().Where(c => c.ContactUserId == userId)
-                .Select(c => c.UserId))
-            .Distinct().ToListAsync(ct);
-        peers.Add(userId);
-        await Clients.Users(peers.Distinct().Select(id =>
-                id.ToString(CultureInfo.InvariantCulture)).ToArray())
-            .PresenceChanged(new PresenceDto(userId, isOnline, lastSeenAt));
+        var connectionIds = presence.GetValidConnectionIds([peerId]);
+        if (connectionIds.Count > 0)
+            await Clients.Clients(connectionIds)
+                .TypingChanged(new TypingStateDto(request.ConversationId, userId, isTyping));
     }
 }

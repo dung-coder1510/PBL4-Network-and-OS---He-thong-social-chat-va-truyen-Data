@@ -4,6 +4,7 @@ namespace PBL4.Realtime;
 
 public interface IChatClient
 {
+    Task ConversationChanged(ConversationSubscriptionDto conversation);
     Task MessageReceived(MessageDto message);
     Task MessageStatusChanged(MessageStatusDto status);
     Task PresenceChanged(PresenceDto presence);

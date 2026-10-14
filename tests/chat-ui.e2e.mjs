@@ -18,8 +18,8 @@ if (!server || !database) throw new Error('Set AUTH_TEST_SQL_SERVER and AUTH_TES
 if (!['localhost', '127.0.0.1'].includes(new URL(webOrigin).hostname)) throw new Error('Local web server only.')
 
 const prefix = 'uitest_' + randomUUID().replaceAll('-', '').slice(0, 12)
-const names = [prefix + '_a', prefix + '_b']
-const displays = ['Kiểm thử A', 'Kiểm thử B']
+const names = [prefix + '_a', prefix + '_b', prefix + '_c']
+const displays = ['Kiểm thử A', 'Kiểm thử B', 'Kiểm thử C']
 const password = 'Ui-test-' + randomUUID()
 let browser
 let ownUsers = false
@@ -78,14 +78,44 @@ try {
   await person.click()
   await pageA.getByRole('dialog').getByRole('button', { name: 'Bắt đầu trò chuyện' }).click()
   await pageA.locator('textarea').waitFor({ state: 'visible' })
+
+  let releaseConversationSnapshot
+  let snapshotCapturedResolve
+  let snapshotFulfilledResolve
+  const releaseConversation = new Promise(resolve => { releaseConversationSnapshot = resolve })
+  const snapshotCaptured = new Promise(resolve => { snapshotCapturedResolve = resolve })
+  const snapshotFulfilled = new Promise(resolve => { snapshotFulfilledResolve = resolve })
+  const conversationDetailPattern = /\/api\/v1\/conversations\/\d+$/
+  await pageB.route(conversationDetailPattern, async route => {
+    const response = await route.fetch()
+    snapshotCapturedResolve()
+    await releaseConversation
+    await route.fulfill({ response })
+    snapshotFulfilledResolve()
+  })
+
   await pageA.locator('textarea').fill('Tin nhắn realtime từ A')
   await pageA.locator('textarea').press('Enter')
+  await snapshotCaptured
+  await pageA.locator('textarea').fill('Tin nhắn thứ hai khi B đang tải conversation')
+  await pageA.locator('textarea').press('Enter')
+  const secondMessageFromA = pageA.getByRole('log').locator('.msg.self')
+    .filter({ hasText: 'Tin nhắn thứ hai khi B đang tải conversation' })
+  await secondMessageFromA.getByText('Đã nhận', { exact: true }).waitFor({ timeout: 5000 })
+  releaseConversationSnapshot()
+  await snapshotFulfilled
+  await pageB.unroute(conversationDetailPattern)
 
   const newConversation = pageB.locator('.conv-item').filter({ hasText: displays[0] })
   await newConversation.waitFor({ timeout: 5000 })
-  await assert.doesNotReject(() => newConversation.getByText('Tin nhắn realtime từ A').waitFor({ timeout: 1000 }))
-  await newConversation.locator('.unread-badge').getByText('1', { exact: true }).waitFor()
+  await assert.doesNotReject(() => newConversation
+    .getByText('Tin nhắn thứ hai khi B đang tải conversation').waitFor({ timeout: 1000 }))
+  await newConversation.locator('.unread-badge').getByText('2', { exact: true }).waitFor()
+  await contextB.setOffline(true)
   await newConversation.click()
+  assert.equal(await newConversation.locator('.unread-badge').count(), 1,
+    'Unread must remain visible until MarkAsRead succeeds.')
+  await contextB.setOffline(false)
   await pageB.getByRole('log').getByText('Tin nhắn realtime từ A').waitFor()
   const sentByA = pageA.getByRole('log').locator('.msg.self').filter({ hasText: 'Tin nhắn realtime từ A' })
   await sentByA.getByText('Đã đọc', { exact: true }).waitFor({ timeout: 5000 })
@@ -101,11 +131,45 @@ try {
   await pageA.getByRole('log').getByText('B trả lời không cần reload').waitFor({ timeout: 5000 })
   assert.equal(await pageB.getByRole('alert').filter({ hasText: /randomUUID/i }).count(), 0)
 
+  // Bản nháp thuộc conversation đang mở; đổi người nhận phải xóa nó để không gửi nhầm.
+  await pageA.locator('textarea').fill('Bản nháp chỉ dành cho B')
+  await pageA.getByRole('button', { name: 'Cuộc trò chuyện mới' }).click()
+  await pageA.getByLabel('Tìm người để trò chuyện').fill(names[2])
+  const personC = pageA.locator('.conversation-person').filter({ hasText: '@' + names[2] })
+  await personC.waitFor()
+  await personC.click()
+  await pageA.getByRole('dialog').getByRole('button', { name: 'Bắt đầu trò chuyện' }).click()
+  await pageA.locator('.thread-header').getByRole('heading', { name: displays[2] }).waitFor()
+  assert.equal(await pageA.locator('textarea').inputValue(), '',
+    'Switching conversations must not carry the previous recipient draft.')
+  await pageA.getByRole('button', { name: `Mở cuộc trò chuyện với ${displays[1]}` }).click()
+
+  await pageA.getByRole('button', { name: 'Cài đặt', exact: true }).click()
+  await pageA.getByRole('heading', { name: 'Cài đặt' }).waitFor()
+  await pageB.locator('textarea').fill('Tin đến khi A đang ở Cài đặt')
+  await pageB.locator('textarea').press('Enter')
+  const backgroundMessage = pageB.getByRole('log').locator('.msg.self')
+    .filter({ hasText: 'Tin đến khi A đang ở Cài đặt' })
+  await backgroundMessage.getByText('Đã nhận', { exact: true }).waitFor({ timeout: 5000 })
+  await pageA.getByRole('button', { name: 'Trò chuyện', exact: true }).click()
+  await pageA.getByRole('button', { name: `Mở cuộc trò chuyện với ${displays[1]}` }).click()
+  await pageA.getByRole('log').getByText('Tin đến khi A đang ở Cài đặt').waitFor()
+
+  const contextC = await browser.newContext()
+  const pageC = await contextC.newPage()
+  await login(pageC, names[2])
+  await pageC.getByRole('button', { name: `Mở cuộc trò chuyện với ${displays[0]}` }).click()
+
   await contextA.setOffline(true)
   await pageB.locator('textarea').fill('Tin gửi lúc A mất mạng')
   await pageB.locator('textarea').press('Enter')
+  await pageC.locator('textarea').fill('Tin C gửi lúc A mất mạng')
+  await pageC.locator('textarea').press('Enter')
   await contextA.setOffline(false)
   await pageA.getByRole('log').getByText('Tin gửi lúc A mất mạng').waitFor({ timeout: 15000 })
+  const pendingFromC = pageC.getByRole('log').locator('.msg.self')
+    .filter({ hasText: 'Tin C gửi lúc A mất mạng' })
+  await pendingFromC.getByText('Đã nhận', { exact: true }).waitFor({ timeout: 15000 })
 
   await pageA.getByRole('button', { name: 'Danh bạ' }).click()
   await pageA.getByRole('heading', { name: 'Danh bạ' }).waitFor()
