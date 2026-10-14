@@ -4,10 +4,8 @@ import Icon from '../components/Icon.jsx'
 import AddContactDialog from '../components/contacts/AddContactDialog.jsx'
 import { contactsApi } from '../services/contactsApi.js'
 import { conversationsApi } from '../services/conversationsApi.js'
-import {
-  acknowledgeDelivered, createChatConnection, listenForMessages, listenForPresence,
-  startChatConnection, stopChatConnection,
-} from '../services/chatConnection.js'
+import { listenForPresence } from '../services/chatConnection.js'
+import { useChatRealtime } from '../realtime/chatRealtimeContext.js'
 
 function activityLabel(user) {
   if (user.isOnline) return 'Đang hoạt động'
@@ -15,7 +13,8 @@ function activityLabel(user) {
   return `Hoạt động ${new Date(user.lastSeenAt).toLocaleString('vi-VN')}`
 }
 
-export default function ContactsPage({ token, userId, onSessionExpired, onOpenConversation }) {
+export default function ContactsPage({ token, onSessionExpired, onOpenConversation }) {
+  const { connection } = useChatRealtime()
   const [contacts, setContacts] = useState([])
   const [filter, setFilter] = useState('all')
   const [query, setQuery] = useState('')
@@ -39,18 +38,13 @@ export default function ContactsPage({ token, userId, onSessionExpired, onOpenCo
   }, [token, onSessionExpired])
 
   useEffect(() => {
-    const connection = createChatConnection(token)
+    if (!connection) return undefined
     const removePresence = listenForPresence(connection, presence => {
       setContacts(current => current.map(contact => contact.user.id === presence.userId
         ? { ...contact, user: { ...contact.user, ...presence } } : contact))
     })
-    const removeMessages = listenForMessages(connection, message => {
-      if (message.senderId !== userId)
-        void acknowledgeDelivered(connection, message.conversationId, message.id).catch(() => {})
-    })
-    void startChatConnection(connection).catch(() => {})
-    return () => { removePresence(); removeMessages(); void stopChatConnection(connection) }
-  }, [token, userId])
+    return removePresence
+  }, [connection])
 
   const filtered = useMemo(() => contacts.filter(contact => {
     const name = contact.alias || contact.user.displayName

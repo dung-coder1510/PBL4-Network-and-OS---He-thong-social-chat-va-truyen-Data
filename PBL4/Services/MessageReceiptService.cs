@@ -51,9 +51,16 @@ public sealed class MessageReceiptService(AppDbContext db)
                 .ExecuteUpdateAsync(setters => setters.SetProperty(m => m.DeliveredAt, now), ct);
         }
 
+        var current = await db.Messages.AsNoTracking()
+            .Where(m => m.Id == upToMessageId)
+            .Select(m => new { m.DeliveredAt, m.ReadAt })
+            .SingleAsync(ct);
+        var deliveredAt = DateTime.SpecifyKind(current.DeliveredAt ?? now, DateTimeKind.Utc);
+        DateTime? readAt = current.ReadAt.HasValue
+            ? DateTime.SpecifyKind(current.ReadAt.Value, DateTimeKind.Utc) : null;
         return new SavedReceipt(new MessageStatusDto(
             conversationId.ToString(CultureInfo.InvariantCulture),
             upToMessageId.ToString(CultureInfo.InvariantCulture), recipientUserId,
-            now, markRead ? now : null), senderUserId);
+            deliveredAt, readAt), senderUserId);
     }
 }

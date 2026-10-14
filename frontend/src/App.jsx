@@ -6,6 +6,7 @@ import SettingsPage from './pages/SettingsPage.jsx'
 import ChatPage from './pages/ChatPage.jsx'
 import ContactsPage from './pages/ContactsPage.jsx'
 import { authApi } from './services/authApi.js'
+import { ChatRealtimeProvider } from './realtime/ChatRealtimeProvider.jsx'
 import './styles/app.css'
 
 const PAGES = new Set(['chat', 'contacts', 'calls', 'files', 'admin', 'settings'])
@@ -107,24 +108,27 @@ function App() {
 
   const visiblePage = page === 'admin' && session.user.role !== 'Admin' ? 'chat' : page
   return (
-    <AppShell currentPage={visiblePage} onLogout={logout} onNavigate={navigate} user={session.user} loggingOut={loggingOut}>
-      {logoutError && <p className="auth-workspace-error" role="alert">{logoutError}</p>}
-      {visiblePage === 'settings'
-        ? <SettingsPage onThemeChange={setTheme} theme={theme} user={session.user} />
-        : visiblePage === 'contacts'
-        ? <ContactsPage token={session.accessToken} userId={session.user.id}
-            onSessionExpired={sessionExpired}
-            onOpenConversation={conversationId => {
-              setOpenConversationId(conversationId)
-              navigate('chat')
-            }} />
-        : visiblePage === 'chat'
-        ? <ChatPage key={session.sessionId} token={session.accessToken} user={session.user}
-            initialConversationId={openConversationId}
-            onInitialConversationHandled={() => setOpenConversationId(null)}
-            onSessionExpired={sessionExpired} />
-        : <EmptyWorkspacePage page={visiblePage} user={session.user} />}
-    </AppShell>
+    <ChatRealtimeProvider key={session.sessionId} token={session.accessToken}
+      user={session.user} onSessionExpired={sessionExpired}>
+      <AppShell currentPage={visiblePage} onLogout={logout} onNavigate={navigate} user={session.user} loggingOut={loggingOut}>
+        {logoutError && <p className="auth-workspace-error" role="alert">{logoutError}</p>}
+        {visiblePage === 'settings'
+          ? <SettingsPage onThemeChange={setTheme} theme={theme} user={session.user} />
+          : visiblePage === 'contacts'
+          ? <ContactsPage token={session.accessToken}
+              onSessionExpired={sessionExpired}
+              onOpenConversation={conversationId => {
+                setOpenConversationId(conversationId)
+                navigate('chat')
+              }} />
+          : visiblePage === 'chat'
+          ? <ChatPage token={session.accessToken} user={session.user}
+              initialConversationId={openConversationId}
+              onInitialConversationHandled={() => setOpenConversationId(null)}
+              onSessionExpired={sessionExpired} />
+          : <EmptyWorkspacePage page={visiblePage} user={session.user} />}
+      </AppShell>
+    </ChatRealtimeProvider>
   )
 }
 

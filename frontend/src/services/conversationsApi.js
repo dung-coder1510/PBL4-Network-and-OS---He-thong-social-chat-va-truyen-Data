@@ -13,6 +13,11 @@ export const conversationsApi = {
     if (beforeId) query.set('beforeId', beforeId)
     return request('/conversations/' + encodeURIComponent(id) + '/messages?' + query, { token, signal })
   },
+  pendingMessages: (token, { afterId, limit = 100 } = {}, signal) => {
+    const query = new URLSearchParams({ limit: String(limit) })
+    if (afterId) query.set('afterId', afterId)
+    return request('/users/me/pending-messages?' + query, { token, signal })
+  },
   create: (token, peerUserId, signal) => request('/conversations', {
     method: 'POST', body: { peerUserId }, token, signal,
   }),

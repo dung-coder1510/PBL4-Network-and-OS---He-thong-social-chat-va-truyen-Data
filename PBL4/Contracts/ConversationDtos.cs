@@ -17,3 +17,6 @@ public sealed record ConversationDto(string Id, ConversationUserDto Peer,
     DateTime CreatedAt, bool HasMessages, MessageDto? LastMessage, int UnreadCount);
 
 public sealed record ConversationPageDto(IReadOnlyList<ConversationDto> Items, string? NextCursor);
+
+// Sự kiện nhẹ để client tải lại DTO phù hợp với chính người đang đăng nhập.
+public sealed record ConversationSubscriptionDto(string ConversationId);

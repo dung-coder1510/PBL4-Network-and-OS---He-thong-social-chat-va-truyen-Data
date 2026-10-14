@@ -30,6 +30,11 @@ export function listenForMessages(connection, handler) {
   return () => connection.off('MessageReceived', handler)
 }
 
+export function listenForConversationChanges(connection, handler) {
+  connection.on('ConversationChanged', handler)
+  return () => connection.off('ConversationChanged', handler)
+}
+
 export function listenForMessageStatuses(connection, handler) {
   connection.on('MessageStatusChanged', handler)
   return () => connection.off('MessageStatusChanged', handler)

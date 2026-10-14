@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.SignalR;
 using PBL4.Contracts;
 using PBL4.Data;
 using PBL4.Models;
@@ -13,7 +14,8 @@ namespace PBL4.Controllers;
 
 [ApiController, Authorize]
 [Route("api/v1/conversations")]
-public sealed class ConversationsController(AppDbContext db, PresenceTracker presence) : ControllerBase
+public sealed class ConversationsController(AppDbContext db, PresenceTracker presence,
+    IHubContext<ChatHub, IChatClient> chatHub) : ControllerBase
 {
     private int CurrentUserId => int.Parse(User.FindFirstValue("sub")!);
 
@@ -121,6 +123,10 @@ public sealed class ConversationsController(AppDbContext db, PresenceTracker pre
             return Problem(statusCode: 409, title: "Thông tin người dùng đã thay đổi. Vui lòng tìm lại.");
         }
         var result = await Project(OwnConversations(userId).Where(c => c.Id == conversation.Id), userId).SingleAsync(ct);
+        var connectionIds = presence.GetValidConnectionIds([userId, request.PeerUserId]);
+        if (connectionIds.Count > 0)
+            await chatHub.Clients.Clients(connectionIds)
+                .ConversationChanged(new ConversationSubscriptionDto(conversation.Id.ToString()));
         return CreatedAtAction(nameof(Get), new { id = conversation.Id }, WithPresence(result));
     }
 

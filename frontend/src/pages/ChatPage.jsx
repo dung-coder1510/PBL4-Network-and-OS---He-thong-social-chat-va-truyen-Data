@@ -4,10 +4,10 @@ import ConversationThread from '../components/chat/ConversationThread.jsx'
 import NewConversationDialog from '../components/chat/NewConversationDialog.jsx'
 import { conversationsApi } from '../services/conversationsApi.js'
 import {
-  acknowledgeDelivered, createChatConnection, listenForMessages,
-  listenForMessageStatuses, listenForPresence, listenForTyping, markAsRead,
-  sendMessage, setTyping as sendTypingState, startChatConnection, stopChatConnection,
+  listenForMessages, listenForMessageStatuses, listenForPresence, listenForTyping,
+  markAsRead, sendMessage, setTyping as sendTypingState,
 } from '../services/chatConnection.js'
+import { useChatRealtime } from '../realtime/chatRealtimeContext.js'
 import {
   applyMessageStatus, applyPresence, createClientMessageId, upsertConversationMessage,
 } from '../utils/chatState.js'
@@ -29,12 +29,9 @@ function mergeMessages(current, additions) {
   })
 }
 
-function isAuthenticationError(error) {
-  return error?.statusCode === 401 || /\b401\b|unauthenticated/i.test(error?.message || '')
-}
-
 export default function ChatPage({ token, user, initialConversationId,
   onInitialConversationHandled, onSessionExpired }) {
+  const { connection, connectionState, connectionError, reconnect, subscribeSync } = useChatRealtime()
   const [items, setItems] = useState([])
   const itemsRef = useRef([])
   const [query, setQuery] = useState('')
@@ -56,10 +53,7 @@ export default function ChatPage({ token, user, initialConversationId,
   const [historyBefore, setHistoryBefore] = useState(null)
   const [nextHistoryCursor, setNextHistoryCursor] = useState(null)
   const [historyRevision, setHistoryRevision] = useState(0)
-  const [connectionState, setConnectionState] = useState('connecting')
-  const [connectionError, setConnectionError] = useState('')
-  const [connectionRevision, setConnectionRevision] = useState(0)
-  const connectionRef = useRef(null)
+  const connectionRef = useRef(connection)
   const lastReadRequestRef = useRef(null)
   const typingActiveRef = useRef(false)
   const typingConversationRef = useRef(null)
@@ -144,32 +138,9 @@ export default function ChatPage({ token, user, initialConversationId,
   }, [token, selectedId, historyBefore, historyRevision, onSessionExpired])
 
   useEffect(() => {
+    if (!connection) return undefined
     let disposed = false
-    const loadingConversations = new Set()
-    const connection = createChatConnection(token, {
-      onReconnecting: () => { if (!disposed) setConnectionState('connecting') },
-      onReconnected: () => {
-        if (disposed) return
-        setConnectionState('connected')
-        setConnectionError('')
-        setLoading(true)
-        setError('')
-        changeItems(() => [])
-        setCursor(null)
-        setNextCursor(null)
-        setRevision(value => value + 1)
-        setHistoryLoading(Boolean(selectedIdRef.current))
-        setHistoryBefore(null)
-        setHistoryRevision(value => value + 1)
-        lastReadRequestRef.current = null
-      },
-      onClosed: failure => {
-        if (disposed) return
-        setConnectionState('disconnected')
-        if (isAuthenticationError(failure)) onSessionExpired()
-        else setConnectionError('Kết nối tin nhắn đã ngắt. Bạn hãy kết nối lại.')
-      },
-    })
+    const pendingConversations = new Map()
     connectionRef.current = connection
 
     const removeMessageListener = listenForMessages(connection, message => {
@@ -181,21 +152,36 @@ export default function ChatPage({ token, user, initialConversationId,
         currentUserId: user.id, isActive: active,
       }))
 
-      if (!knownConversation && !queryRef.current.trim() &&
-          !loadingConversations.has(message.conversationId)) {
-        loadingConversations.add(message.conversationId)
-        conversationsApi.get(token, message.conversationId).then(result => {
-          if (disposed) return
-          changeItems(current => upsertConversationMessage(
-            current, result.lastMessage || received, result,
-            { currentUserId: user.id, isActive: active, fromSnapshot: true }))
-        }).catch(failure => {
-          if (!disposed && failure.status === 401) onSessionExpired()
-        }).finally(() => loadingConversations.delete(message.conversationId))
+      if (!knownConversation && !queryRef.current.trim()) {
+        let pending = pendingConversations.get(message.conversationId)
+        if (!pending) {
+          pending = { loading: false, messages: [] }
+          pendingConversations.set(message.conversationId, pending)
+        }
+        if (!pending.messages.some(item => messageKey(item) === messageKey(received)))
+          pending.messages.push(received)
+        if (!pending.loading) {
+          pending.loading = true
+          conversationsApi.get(token, message.conversationId).then(result => {
+            if (disposed) return
+            const bufferedMessages = pendingConversations.get(message.conversationId)?.messages || []
+            changeItems(current => {
+              const isActive = selectedIdRef.current === message.conversationId &&
+                document.visibilityState === 'visible'
+              let next = upsertConversationMessage(current,
+                result.lastMessage || bufferedMessages[0] || received, result,
+                { currentUserId: user.id, isActive, fromSnapshot: true })
+              for (const buffered of bufferedMessages)
+                next = upsertConversationMessage(next, buffered, null,
+                  { currentUserId: user.id, isActive })
+              return next
+            })
+          }).catch(failure => {
+            if (!disposed && failure.status === 401) onSessionExpired()
+          }).finally(() => pendingConversations.delete(message.conversationId))
+        }
       }
 
-      if (message.senderId !== user.id)
-        void acknowledgeDelivered(connection, message.conversationId, message.id).catch(() => {})
       if (selectedIdRef.current === message.conversationId)
         setMessages(current => mergeMessages(current, [received]))
     })
@@ -229,18 +215,6 @@ export default function ChatPage({ token, user, initialConversationId,
         peerTypingTimerRef.current = setTimeout(() => setPeerTyping(false), 4000)
     })
 
-    startChatConnection(connection).then(() => {
-      if (disposed) return
-      setConnectionState('connected')
-      // Bù khoảng trống giữa lần tải REST đầu tiên và lúc Hub bắt đầu nhận event.
-      setLoading(true)
-      setRevision(value => value + 1)
-    }).catch(failure => {
-      if (disposed) return
-      setConnectionState('disconnected')
-      if (isAuthenticationError(failure)) onSessionExpired()
-      else setConnectionError('Không mở được kết nối tin nhắn. Kiểm tra server rồi thử lại.')
-    })
     return () => {
       disposed = true
       clearTimeout(peerTypingTimerRef.current)
@@ -250,9 +224,24 @@ export default function ChatPage({ token, user, initialConversationId,
       removePresenceListener()
       removeTypingListener()
       if (connectionRef.current === connection) connectionRef.current = null
-      void stopChatConnection(connection)
     }
-  }, [token, connectionRevision, onSessionExpired, user.id])
+  }, [connection, token, onSessionExpired, user.id])
+
+  useEffect(() => subscribeSync(() => {
+    setLoading(true)
+    setError('')
+    changeItems(() => [])
+    setCursor(null)
+    setNextCursor(null)
+    setRevision(value => value + 1)
+    setHistoryLoading(Boolean(selectedIdRef.current))
+    setHistoryBefore(null)
+    setHistoryRevision(value => value + 1)
+    setDetailLoading(Boolean(selectedIdRef.current))
+    setDetailError('')
+    setDetailRevision(value => value + 1)
+    lastReadRequestRef.current = null
+  }), [subscribeSync])
 
   useEffect(() => {
     if (!selectedId || connectionState !== 'connected' ||
@@ -327,8 +316,6 @@ export default function ChatPage({ token, user, initialConversationId,
     lastReadRequestRef.current = null
     setSelectedId(id)
     setPeerTyping(false)
-    changeItems(current => current.map(item => item.id === id
-      ? { ...item, unreadCount: 0 } : item))
     setShowList(false)
     setDetailLoading(true)
     setDetailError('')
@@ -377,12 +364,6 @@ export default function ChatPage({ token, user, initialConversationId,
     setHistoryBefore(nextHistoryCursor)
   }
 
-  function reconnect() {
-    setConnectionState('connecting')
-    setConnectionError('')
-    setConnectionRevision(value => value + 1)
-  }
-
   async function submitMessage(content, existingClientMessageId) {
     const connection = connectionRef.current
     if (!selectedId || !connection || connectionState !== 'connected')
@@ -418,7 +399,8 @@ export default function ChatPage({ token, user, initialConversationId,
         error={error} currentUserId={user.id} selectedId={selectedId} onSelect={select}
         onCreate={() => setShowCreate(true)} onRefresh={refresh} hasMore={Boolean(nextCursor)}
         onLoadMore={loadMore} />
-      <ConversationThread conversation={conversation} loading={detailLoading} error={detailError}
+      <ConversationThread key={conversation?.id || selectedId || 'empty'}
+        conversation={conversation} loading={detailLoading} error={detailError}
         messages={messages} currentUserId={user.id} historyLoading={historyLoading}
         historyError={historyError} hasOlder={Boolean(nextHistoryCursor)}
         connectionState={connectionState} connectionError={connectionError}

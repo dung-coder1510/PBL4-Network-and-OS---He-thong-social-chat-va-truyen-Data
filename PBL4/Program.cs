@@ -30,9 +30,11 @@ namespace PBL4
                 options.UseSqlServer(connectionString));
             builder.Services.AddControllers();
             builder.Services.AddPbl4Auth(builder.Configuration, builder.Environment);
-            builder.Services.AddSignalR();
+            builder.Services.AddSignalR(options => options.AddFilter<RealtimeSessionFilter>());
             builder.Services.AddScoped<MessageService>();
             builder.Services.AddScoped<MessageReceiptService>();
+            builder.Services.AddScoped<PresenceService>();
+            builder.Services.AddScoped<RealtimeSessionFilter>();
             builder.Services.AddSingleton<PresenceTracker>();
             builder.Services.AddSingleton<TypingRateLimiter>();
             builder.Services.AddSingleton<IUserIdProvider, SubClaimUserIdProvider>();
