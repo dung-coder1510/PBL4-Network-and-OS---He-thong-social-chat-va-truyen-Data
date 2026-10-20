@@ -1,0 +1,970 @@
+{
+  "runId": "2026-10-20T07-48-09-490Z-2c97c17c",
+  "completed": true,
+  "generatedAt": "2026-10-20T07:55:04.237Z",
+  "configuration": {
+    "build": "Release",
+    "intervalSeconds": 15,
+    "timeoutSeconds": 60,
+    "transport": "WebSockets",
+    "distinctUsers": 1000,
+    "contacts": "chain, at most two watchers per user",
+    "authenticationSetup": "Real login API with distinct loopback source IPs; account insertion outside measured phases",
+    "logicalProcessors": 12,
+    "cpuModel": "12th Gen Intel(R) Core(TM) i5-12450HX",
+    "systemMemoryGiB": 23.71,
+    "backendAndSqlAndGeneratorOnSameMachine": true
+  },
+  "stages": [
+    {
+      "phase": "steady-100",
+      "target": 100,
+      "durationSeconds": 75.605,
+      "connected": 100,
+      "heartbeatAckMs": {
+        "count": 500,
+        "mean": 4.045,
+        "p50": 3.515,
+        "p95": 7.69,
+        "p99": 17.571,
+        "max": 26.683
+      },
+      "errors": 0,
+      "unexpectedOffline": 0
+    },
+    {
+      "phase": "steady-500",
+      "target": 500,
+      "durationSeconds": 75.482,
+      "connected": 500,
+      "heartbeatAckMs": {
+        "count": 2504,
+        "mean": 5.441,
+        "p50": 4.18,
+        "p95": 10.317,
+        "p99": 23.527,
+        "max": 92.293
+      },
+      "errors": 0,
+      "unexpectedOffline": 0
+    },
+    {
+      "phase": "steady-1000",
+      "target": 1000,
+      "durationSeconds": 90.672,
+      "connected": 1000,
+      "heartbeatAckMs": {
+        "count": 6011,
+        "mean": 7.715,
+        "p50": 5.176,
+        "p95": 19.493,
+        "p99": 47.403,
+        "max": 195.351
+      },
+      "errors": 0,
+      "unexpectedOffline": 0
+    },
+    {
+      "phase": "burst-1000",
+      "target": 1000,
+      "durationSeconds": 1.2199167000000015,
+      "heartbeatAckMs": {
+        "count": 1000,
+        "mean": 755.39,
+        "p50": 716.581,
+        "p95": 1188.426,
+        "p99": 1206.835,
+        "max": 1210.991
+      },
+      "errors": 0
+    }
+  ],
+  "resourceSummary": [
+    {
+      "phase": "baseline",
+      "process": "backend",
+      "samples": 9,
+      "cpuMachinePercent": {
+        "count": 9,
+        "mean": 0.011,
+        "p50": 0,
+        "p95": 0.095,
+        "p99": 0.095,
+        "max": 0.095
+      },
+      "workingSetMiB": {
+        "count": 9,
+        "mean": 119.504,
+        "p50": 118.74,
+        "p95": 121.89,
+        "p99": 121.89,
+        "max": 121.89
+      },
+      "privateMiB": {
+        "count": 9,
+        "mean": 39.353,
+        "p50": 38.7,
+        "p95": 40.8,
+        "p99": 40.8,
+        "max": 40.8
+      },
+      "maxThreads": 32,
+      "maxHandles": 691
+    },
+    {
+      "phase": "baseline",
+      "process": "sqlserver",
+      "samples": 9,
+      "cpuMachinePercent": null,
+      "workingSetMiB": {
+        "count": 9,
+        "mean": 173.999,
+        "p50": 175.06,
+        "p95": 175.11,
+        "p99": 175.11,
+        "max": 175.11
+      },
+      "privateMiB": {
+        "count": 9,
+        "mean": 646.796,
+        "p50": 661.45,
+        "p95": 661.45,
+        "p99": 661.45,
+        "max": 661.45
+      },
+      "maxThreads": 112,
+      "maxHandles": 818
+    },
+    {
+      "phase": "baseline",
+      "process": "client",
+      "samples": 9,
+      "cpuMachinePercent": {
+        "count": 9,
+        "mean": 0.014,
+        "p50": 0,
+        "p95": 0.125,
+        "p99": 0.125,
+        "max": 0.125
+      },
+      "workingSetMiB": {
+        "count": 9,
+        "mean": 52.559,
+        "p50": 52.58,
+        "p95": 52.58,
+        "p99": 52.58,
+        "max": 52.58
+      },
+      "privateMiB": {
+        "count": 9,
+        "mean": 62.09,
+        "p50": 62.09,
+        "p95": 62.09,
+        "p99": 62.09,
+        "max": 62.09
+      },
+      "maxThreads": 17,
+      "maxHandles": 222
+    },
+    {
+      "phase": "ramp-100",
+      "process": "backend",
+      "samples": 7,
+      "cpuMachinePercent": {
+        "count": 7,
+        "mean": 18.566,
+        "p50": 19.719,
+        "p95": 24.407,
+        "p99": 24.407,
+        "max": 24.407
+      },
+      "workingSetMiB": {
+        "count": 7,
+        "mean": 145.417,
+        "p50": 150.23,
+        "p95": 159.24,
+        "p99": 159.24,
+        "max": 159.24
+      },
+      "privateMiB": {
+        "count": 7,
+        "mean": 60.841,
+        "p50": 65.06,
+        "p95": 73.59,
+        "p99": 73.59,
+        "max": 73.59
+      },
+      "maxThreads": 51,
+      "maxHandles": 1003
+    },
+    {
+      "phase": "ramp-100",
+      "process": "sqlserver",
+      "samples": 7,
+      "cpuMachinePercent": null,
+      "workingSetMiB": {
+        "count": 7,
+        "mean": 178.97,
+        "p50": 180.94,
+        "p95": 181.22,
+        "p99": 181.22,
+        "max": 181.22
+      },
+      "privateMiB": {
+        "count": 7,
+        "mean": 636.381,
+        "p50": 639.64,
+        "p95": 647.7,
+        "p99": 647.7,
+        "max": 647.7
+      },
+      "maxThreads": 103,
+      "maxHandles": 848
+    },
+    {
+      "phase": "ramp-100",
+      "process": "client",
+      "samples": 7,
+      "cpuMachinePercent": {
+        "count": 7,
+        "mean": 1.015,
+        "p50": 0.805,
+        "p95": 2.119,
+        "p99": 2.119,
+        "max": 2.119
+      },
+      "workingSetMiB": {
+        "count": 7,
+        "mean": 61.953,
+        "p50": 63.5,
+        "p95": 65.51,
+        "p99": 65.51,
+        "max": 65.51
+      },
+      "privateMiB": {
+        "count": 7,
+        "mean": 73.017,
+        "p50": 75.46,
+        "p95": 76.04,
+        "p99": 76.04,
+        "max": 76.04
+      },
+      "maxThreads": 17,
+      "maxHandles": 322
+    },
+    {
+      "phase": "steady-100",
+      "process": "backend",
+      "samples": 68,
+      "cpuMachinePercent": {
+        "count": 68,
+        "mean": 2.057,
+        "p50": 0.276,
+        "p95": 8.22,
+        "p99": 11.959,
+        "max": 11.959
+      },
+      "workingSetMiB": {
+        "count": 68,
+        "mean": 184.783,
+        "p50": 183.62,
+        "p95": 190.74,
+        "p99": 192,
+        "max": 192
+      },
+      "privateMiB": {
+        "count": 68,
+        "mean": 89.541,
+        "p50": 88.54,
+        "p95": 94.97,
+        "p99": 95.44,
+        "max": 95.44
+      },
+      "maxThreads": 53,
+      "maxHandles": 970
+    },
+    {
+      "phase": "steady-100",
+      "process": "sqlserver",
+      "samples": 68,
+      "cpuMachinePercent": null,
+      "workingSetMiB": {
+        "count": 68,
+        "mean": 179.466,
+        "p50": 181.28,
+        "p95": 181.76,
+        "p99": 181.76,
+        "max": 181.76
+      },
+      "privateMiB": {
+        "count": 68,
+        "mean": 646.286,
+        "p50": 647.86,
+        "p95": 670.01,
+        "p99": 670.01,
+        "max": 670.01
+      },
+      "maxThreads": 115,
+      "maxHandles": 866
+    },
+    {
+      "phase": "steady-100",
+      "process": "client",
+      "samples": 68,
+      "cpuMachinePercent": {
+        "count": 68,
+        "mean": 0.081,
+        "p50": 0,
+        "p95": 0.5,
+        "p99": 0.996,
+        "max": 0.996
+      },
+      "workingSetMiB": {
+        "count": 68,
+        "mean": 66.194,
+        "p50": 66.35,
+        "p95": 66.41,
+        "p99": 66.47,
+        "max": 66.47
+      },
+      "privateMiB": {
+        "count": 68,
+        "mean": 75.924,
+        "p50": 76.05,
+        "p95": 76.07,
+        "p99": 76.07,
+        "max": 76.07
+      },
+      "maxThreads": 14,
+      "maxHandles": 322
+    },
+    {
+      "phase": "ramp-500",
+      "process": "backend",
+      "samples": 24,
+      "cpuMachinePercent": {
+        "count": 24,
+        "mean": 22.514,
+        "p50": 22.792,
+        "p95": 26.104,
+        "p99": 26.279,
+        "max": 26.279
+      },
+      "workingSetMiB": {
+        "count": 24,
+        "mean": 207.881,
+        "p50": 207.38,
+        "p95": 221.88,
+        "p99": 224.91,
+        "max": 224.91
+      },
+      "privateMiB": {
+        "count": 24,
+        "mean": 110.502,
+        "p50": 110.02,
+        "p95": 123.66,
+        "p99": 126.54,
+        "max": 126.54
+      },
+      "maxThreads": 51,
+      "maxHandles": 1514
+    },
+    {
+      "phase": "ramp-500",
+      "process": "sqlserver",
+      "samples": 24,
+      "cpuMachinePercent": null,
+      "workingSetMiB": {
+        "count": 24,
+        "mean": 178.468,
+        "p50": 178.21,
+        "p95": 179.25,
+        "p99": 179.3,
+        "max": 179.3
+      },
+      "privateMiB": {
+        "count": 24,
+        "mean": 650.963,
+        "p50": 644.45,
+        "p95": 664.78,
+        "p99": 664.83,
+        "max": 664.83
+      },
+      "maxThreads": 114,
+      "maxHandles": 895
+    },
+    {
+      "phase": "ramp-500",
+      "process": "client",
+      "samples": 24,
+      "cpuMachinePercent": {
+        "count": 24,
+        "mean": 0.901,
+        "p50": 0.857,
+        "p95": 1.498,
+        "p99": 1.742,
+        "max": 1.742
+      },
+      "workingSetMiB": {
+        "count": 24,
+        "mean": 72.035,
+        "p50": 70.91,
+        "p95": 78.82,
+        "p99": 78.96,
+        "max": 78.96
+      },
+      "privateMiB": {
+        "count": 24,
+        "mean": 83.7,
+        "p50": 81.75,
+        "p95": 89.67,
+        "p99": 90.16,
+        "max": 90.16
+      },
+      "maxThreads": 13,
+      "maxHandles": 722
+    },
+    {
+      "phase": "steady-500",
+      "process": "backend",
+      "samples": 67,
+      "cpuMachinePercent": {
+        "count": 67,
+        "mean": 1.115,
+        "p50": 0.744,
+        "p95": 2.393,
+        "p99": 11.543,
+        "max": 11.543
+      },
+      "workingSetMiB": {
+        "count": 67,
+        "mean": 226.165,
+        "p50": 226.31,
+        "p95": 227.26,
+        "p99": 227.32,
+        "max": 227.32
+      },
+      "privateMiB": {
+        "count": 67,
+        "mean": 127.757,
+        "p50": 127.46,
+        "p95": 128.96,
+        "p99": 130.48,
+        "max": 130.48
+      },
+      "maxThreads": 49,
+      "maxHandles": 1514
+    },
+    {
+      "phase": "steady-500",
+      "process": "sqlserver",
+      "samples": 67,
+      "cpuMachinePercent": null,
+      "workingSetMiB": {
+        "count": 67,
+        "mean": 177.207,
+        "p50": 176.93,
+        "p95": 179.31,
+        "p99": 179.33,
+        "max": 179.33
+      },
+      "privateMiB": {
+        "count": 67,
+        "mean": 645.913,
+        "p50": 639.48,
+        "p95": 664.71,
+        "p99": 664.85,
+        "max": 664.85
+      },
+      "maxThreads": 114,
+      "maxHandles": 895
+    },
+    {
+      "phase": "steady-500",
+      "process": "client",
+      "samples": 67,
+      "cpuMachinePercent": {
+        "count": 67,
+        "mean": 0.249,
+        "p50": 0.249,
+        "p95": 0.532,
+        "p99": 0.871,
+        "max": 0.871
+      },
+      "workingSetMiB": {
+        "count": 67,
+        "mean": 80.695,
+        "p50": 80.8,
+        "p95": 81.15,
+        "p99": 81.2,
+        "max": 81.2
+      },
+      "privateMiB": {
+        "count": 67,
+        "mean": 91.506,
+        "p50": 91.47,
+        "p95": 92.05,
+        "p99": 92.66,
+        "max": 92.66
+      },
+      "maxThreads": 13,
+      "maxHandles": 722
+    },
+    {
+      "phase": "ramp-1000",
+      "process": "backend",
+      "samples": 29,
+      "cpuMachinePercent": {
+        "count": 29,
+        "mean": 23.213,
+        "p50": 24.135,
+        "p95": 25.704,
+        "p99": 26.8,
+        "max": 26.8
+      },
+      "workingSetMiB": {
+        "count": 29,
+        "mean": 236.923,
+        "p50": 233.48,
+        "p95": 262.38,
+        "p99": 262.45,
+        "max": 262.45
+      },
+      "privateMiB": {
+        "count": 29,
+        "mean": 141.11,
+        "p50": 136.75,
+        "p95": 168.98,
+        "p99": 169.11,
+        "max": 169.11
+      },
+      "maxThreads": 57,
+      "maxHandles": 2017
+    },
+    {
+      "phase": "ramp-1000",
+      "process": "sqlserver",
+      "samples": 29,
+      "cpuMachinePercent": null,
+      "workingSetMiB": {
+        "count": 29,
+        "mean": 180.056,
+        "p50": 179.96,
+        "p95": 181.49,
+        "p99": 181.52,
+        "max": 181.52
+      },
+      "privateMiB": {
+        "count": 29,
+        "mean": 652.304,
+        "p50": 650.59,
+        "p95": 681.47,
+        "p99": 681.49,
+        "max": 681.49
+      },
+      "maxThreads": 123,
+      "maxHandles": 936
+    },
+    {
+      "phase": "ramp-1000",
+      "process": "client",
+      "samples": 29,
+      "cpuMachinePercent": {
+        "count": 29,
+        "mean": 1.114,
+        "p50": 1.044,
+        "p95": 1.759,
+        "p99": 3.671,
+        "max": 3.671
+      },
+      "workingSetMiB": {
+        "count": 29,
+        "mean": 85.878,
+        "p50": 85.72,
+        "p95": 95.95,
+        "p99": 98.22,
+        "max": 98.22
+      },
+      "privateMiB": {
+        "count": 29,
+        "mean": 100.386,
+        "p50": 97.23,
+        "p95": 115.37,
+        "p99": 115.37,
+        "max": 115.37
+      },
+      "maxThreads": 13,
+      "maxHandles": 1223
+    },
+    {
+      "phase": "steady-1000",
+      "process": "backend",
+      "samples": 81,
+      "cpuMachinePercent": {
+        "count": 81,
+        "mean": 1.345,
+        "p50": 1.329,
+        "p95": 2.488,
+        "p99": 4.747,
+        "max": 4.747
+      },
+      "workingSetMiB": {
+        "count": 81,
+        "mean": 252.354,
+        "p50": 266.68,
+        "p95": 270.47,
+        "p99": 270.64,
+        "max": 270.64
+      },
+      "privateMiB": {
+        "count": 81,
+        "mean": 157.952,
+        "p50": 173.02,
+        "p95": 176.98,
+        "p99": 177.04,
+        "max": 177.04
+      },
+      "maxThreads": 55,
+      "maxHandles": 2048
+    },
+    {
+      "phase": "steady-1000",
+      "process": "sqlserver",
+      "samples": 81,
+      "cpuMachinePercent": null,
+      "workingSetMiB": {
+        "count": 81,
+        "mean": 180.362,
+        "p50": 180.99,
+        "p95": 181.55,
+        "p99": 181.55,
+        "max": 181.55
+      },
+      "privateMiB": {
+        "count": 81,
+        "mean": 660.399,
+        "p50": 663.85,
+        "p95": 681.5,
+        "p99": 681.5,
+        "max": 681.5
+      },
+      "maxThreads": 123,
+      "maxHandles": 937
+    },
+    {
+      "phase": "steady-1000",
+      "process": "client",
+      "samples": 81,
+      "cpuMachinePercent": {
+        "count": 81,
+        "mean": 0.338,
+        "p50": 0.368,
+        "p95": 0.748,
+        "p99": 1.113,
+        "max": 1.113
+      },
+      "workingSetMiB": {
+        "count": 81,
+        "mean": 103.125,
+        "p50": 104.03,
+        "p95": 104.55,
+        "p99": 104.79,
+        "max": 104.79
+      },
+      "privateMiB": {
+        "count": 81,
+        "mean": 118.138,
+        "p50": 118.37,
+        "p95": 119.43,
+        "p99": 119.52,
+        "max": 119.52
+      },
+      "maxThreads": 15,
+      "maxHandles": 1222
+    },
+    {
+      "phase": "burst-1000",
+      "process": "backend",
+      "samples": 1,
+      "cpuMachinePercent": {
+        "count": 1,
+        "mean": 10.056,
+        "p50": 10.056,
+        "p95": 10.056,
+        "p99": 10.056,
+        "max": 10.056
+      },
+      "workingSetMiB": {
+        "count": 1,
+        "mean": 276.69,
+        "p50": 276.69,
+        "p95": 276.69,
+        "p99": 276.69,
+        "max": 276.69
+      },
+      "privateMiB": {
+        "count": 1,
+        "mean": 182.25,
+        "p50": 182.25,
+        "p95": 182.25,
+        "p99": 182.25,
+        "max": 182.25
+      },
+      "maxThreads": 49,
+      "maxHandles": 2105
+    },
+    {
+      "phase": "burst-1000",
+      "process": "sqlserver",
+      "samples": 1,
+      "cpuMachinePercent": null,
+      "workingSetMiB": {
+        "count": 1,
+        "mean": 180.35,
+        "p50": 180.35,
+        "p95": 180.35,
+        "p99": 180.35,
+        "max": 180.35
+      },
+      "privateMiB": {
+        "count": 1,
+        "mean": 681.11,
+        "p50": 681.11,
+        "p95": 681.11,
+        "p99": 681.11,
+        "max": 681.11
+      },
+      "maxThreads": 121,
+      "maxHandles": 961
+    },
+    {
+      "phase": "burst-1000",
+      "process": "client",
+      "samples": 1,
+      "cpuMachinePercent": {
+        "count": 1,
+        "mean": 1.886,
+        "p50": 1.886,
+        "p95": 1.886,
+        "p99": 1.886,
+        "max": 1.886
+      },
+      "workingSetMiB": {
+        "count": 1,
+        "mean": 104.68,
+        "p50": 104.68,
+        "p95": 104.68,
+        "p99": 104.68,
+        "max": 104.68
+      },
+      "privateMiB": {
+        "count": 1,
+        "mean": 118.93,
+        "p50": 118.93,
+        "p95": 118.93,
+        "p99": 118.93,
+        "max": 118.93
+      },
+      "maxThreads": 15,
+      "maxHandles": 1222
+    },
+    {
+      "phase": "closing",
+      "process": "backend",
+      "samples": 1,
+      "cpuMachinePercent": {
+        "count": 1,
+        "mean": 8.199,
+        "p50": 8.199,
+        "p95": 8.199,
+        "p99": 8.199,
+        "max": 8.199
+      },
+      "workingSetMiB": {
+        "count": 1,
+        "mean": 284.34,
+        "p50": 284.34,
+        "p95": 284.34,
+        "p99": 284.34,
+        "max": 284.34
+      },
+      "privateMiB": {
+        "count": 1,
+        "mean": 189.12,
+        "p50": 189.12,
+        "p95": 189.12,
+        "p99": 189.12,
+        "max": 189.12
+      },
+      "maxThreads": 48,
+      "maxHandles": 1232
+    },
+    {
+      "phase": "closing",
+      "process": "sqlserver",
+      "samples": 1,
+      "cpuMachinePercent": null,
+      "workingSetMiB": {
+        "count": 1,
+        "mean": 179.52,
+        "p50": 179.52,
+        "p95": 179.52,
+        "p99": 179.52,
+        "max": 179.52
+      },
+      "privateMiB": {
+        "count": 1,
+        "mean": 629.46,
+        "p50": 629.46,
+        "p95": 629.46,
+        "p99": 629.46,
+        "max": 629.46
+      },
+      "maxThreads": 95,
+      "maxHandles": 969
+    },
+    {
+      "phase": "closing",
+      "process": "client",
+      "samples": 1,
+      "cpuMachinePercent": {
+        "count": 1,
+        "mean": 3.227,
+        "p50": 3.227,
+        "p95": 3.227,
+        "p99": 3.227,
+        "max": 3.227
+      },
+      "workingSetMiB": {
+        "count": 1,
+        "mean": 104.83,
+        "p50": 104.83,
+        "p95": 104.83,
+        "p99": 104.83,
+        "max": 104.83
+      },
+      "privateMiB": {
+        "count": 1,
+        "mean": 119,
+        "p50": 119,
+        "p95": 119,
+        "p99": 119,
+        "max": 119
+      },
+      "maxThreads": 15,
+      "maxHandles": 1222
+    },
+    {
+      "phase": "cooldown",
+      "process": "backend",
+      "samples": 58,
+      "cpuMachinePercent": {
+        "count": 58,
+        "mean": 0.51,
+        "p50": 0.123,
+        "p95": 5.219,
+        "p99": 6.478,
+        "max": 6.478
+      },
+      "workingSetMiB": {
+        "count": 58,
+        "mean": 288.27,
+        "p50": 287.45,
+        "p95": 300,
+        "p99": 300.01,
+        "max": 300.01
+      },
+      "privateMiB": {
+        "count": 58,
+        "mean": 194.251,
+        "p50": 192.88,
+        "p95": 207.08,
+        "p99": 207.08,
+        "max": 207.08
+      },
+      "maxThreads": 48,
+      "maxHandles": 1203
+    },
+    {
+      "phase": "cooldown",
+      "process": "sqlserver",
+      "samples": 58,
+      "cpuMachinePercent": null,
+      "workingSetMiB": {
+        "count": 58,
+        "mean": 183.303,
+        "p50": 179.52,
+        "p95": 213.89,
+        "p99": 213.89,
+        "max": 213.89
+      },
+      "privateMiB": {
+        "count": 58,
+        "mean": 677.187,
+        "p50": 704.55,
+        "p95": 704.77,
+        "p99": 704.79,
+        "max": 704.79
+      },
+      "maxThreads": 117,
+      "maxHandles": 998
+    },
+    {
+      "phase": "cooldown",
+      "process": "client",
+      "samples": 58,
+      "cpuMachinePercent": {
+        "count": 58,
+        "mean": 0.138,
+        "p50": 0,
+        "p95": 0.251,
+        "p99": 6.514,
+        "max": 6.514
+      },
+      "workingSetMiB": {
+        "count": 58,
+        "mean": 103.303,
+        "p50": 103.68,
+        "p95": 103.79,
+        "p99": 103.79,
+        "max": 103.79
+      },
+      "privateMiB": {
+        "count": 58,
+        "mean": 118.912,
+        "p50": 118.94,
+        "p95": 118.98,
+        "p99": 118.98,
+        "max": 118.98
+      },
+      "maxThreads": 15,
+      "maxHandles": 222
+    }
+  ],
+  "connectionStartMs": {
+    "count": 1000,
+    "mean": 194.641,
+    "p50": 169.176,
+    "p95": 520.943,
+    "p99": 690.213,
+    "max": 879.921
+  },
+  "expectedOfflineMs": {
+    "count": 29,
+    "mean": 61127.69,
+    "p50": 61128,
+    "p95": 61148,
+    "p99": 61148,
+    "max": 61148
+  },
+  "clientEventLoopDelayMs": {
+    "p99": 66.224127,
+    "max": 2262.827007
+  },
+  "errors": [],
+  "measurementNotes": [
+    "SQL Server CPU time was unavailable under the current Windows identity. The original raw sampler coerced missing SQL CPU time to zero. Ignore SQL CPU zeros in resources.jsonl; derived SQL CPU statistics are null. The sampler has been corrected for future runs.",
+    "This run used unencrypted HTTP/WebSockets on localhost with negotiation skipped; TLS overhead and WAN latency are not measured.",
+    "Short runs and retained unexpired sessions do not establish absence of a memory leak."
+  ]
+}

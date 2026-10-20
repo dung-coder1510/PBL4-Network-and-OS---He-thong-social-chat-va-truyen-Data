@@ -55,6 +55,10 @@ export function sendMessage(connection, { conversationId, clientMessageId, conte
   return connection.invoke('SendMessage', { conversationId, clientMessageId, content })
 }
 
+export function sendHeartbeat(connection) {
+  return connection.invoke('Heartbeat')
+}
+
 export function acknowledgeDelivered(connection, conversationId, upToMessageId) {
   return connection.invoke('AcknowledgeDelivered', { conversationId, upToMessageId })
 }

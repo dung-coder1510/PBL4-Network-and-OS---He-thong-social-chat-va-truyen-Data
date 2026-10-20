@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { createHeartbeatLoop } from '../frontend/src/services/heartbeat.js'
 
 const requireFromFrontend = createRequire(new URL('../frontend/package.json', import.meta.url))
 const signalR = requireFromFrontend('@microsoft/signalr')
@@ -20,6 +21,7 @@ const password = randomUUID()
 const users = []
 const tokens = []
 const hubs = []
+const heartbeats = new Map()
 let ownNames = false
 let passed = 0
 
@@ -53,8 +55,18 @@ function connect(token) {
   connection.on('PresenceChanged', () => {})
   connection.on('TypingChanged', () => {})
   connection.on('ConversationChanged', () => {})
+  const heartbeat = createHeartbeatLoop(() => connection.invoke('Heartbeat'))
+  heartbeats.set(connection, heartbeat)
+  connection.onclose(() => heartbeat.stop())
   hubs.push(connection)
   return connection
+}
+
+async function start(connection) {
+  await connection.start()
+  const acknowledgement = await connection.invoke('Heartbeat')
+  assert.equal(acknowledgement.intervalSeconds, 15)
+  heartbeats.get(connection).start()
 }
 
 function nextMessage(connection, timeoutMs = 5000) {
@@ -110,6 +122,22 @@ try {
     assert.equal(senderHub.state, signalR.HubConnectionState.Connected)
     assert.equal(receiverHub.state, signalR.HubConnectionState.Connected)
   })
+
+  const beforeHeartbeat = await api('/conversations', { token: tokens[0] })
+  check('An authenticated socket alone does not make the receiver online', () =>
+    assert.equal(beforeHeartbeat.data.items.find(item => item.id === conversationId).peer.isOnline, false))
+  const onlineEvent = nextEvent(senderHub, 'PresenceChanged')
+  await receiverHub.invoke('Heartbeat')
+  const online = await onlineEvent
+  check('The first application heartbeat announces online', () => {
+    assert.equal(online.userId, users[1].id)
+    assert.equal(online.isOnline, true)
+  })
+  for (const connection of [senderHub, receiverHub, outsiderHub]) {
+    const acknowledgement = await connection.invoke('Heartbeat')
+    assert.equal(acknowledgement.intervalSeconds, 15)
+    heartbeats.get(connection).start()
+  }
 
   const conversationChangedEvent = nextEvent(receiverHub, 'ConversationChanged')
   const createdForReceiver = await api('/conversations', {
@@ -240,7 +268,7 @@ try {
   })
 
   const receiverHub2 = connect(tokens[1])
-  await receiverHub2.start()
+  await start(receiverHub2)
   const noOfflineEvent = nextEvent(senderHub, 'PresenceChanged', 400)
     .then(() => false, () => true)
   await receiverHub.stop()
@@ -248,11 +276,18 @@ try {
   check('Closing one of several connections keeps the account online', () =>
     assert.equal(stayedOnline, true))
 
-  const offlineEvent = nextEvent(senderHub, 'PresenceChanged')
-  await receiverHub2.stop()
+  heartbeats.get(receiverHub2).stop()
+  await receiverHub2.invoke('Heartbeat')
+  const lastHeartbeatAt = Date.now()
+  const beforeTimeout = await api('/conversations', { token: tokens[0] })
+  check('Stopping heartbeats does not immediately mark the account offline', () =>
+    assert.equal(beforeTimeout.data.items.find(item => item.id === conversationId).peer.isOnline, true))
+  const offlineEvent = nextEvent(senderHub, 'PresenceChanged', 65000)
   const offline = await offlineEvent
   const senderListAfterOffline = await api('/conversations', { token: tokens[0] })
-  check('Presence changes only after the receiver loses its final Hub connection', () => {
+  check('After 60 seconds without heartbeat the receiver is offline even with SignalR still connected', () => {
+    assert.ok(Date.now() - lastHeartbeatAt >= 59000)
+    assert.equal(receiverHub2.state, signalR.HubConnectionState.Connected)
     assert.equal(offline.userId, users[1].id)
     assert.equal(offline.isOnline, false)
     assert.ok(offline.lastSeenAt.endsWith('Z'))
@@ -260,6 +295,7 @@ try {
     assert.equal(peer.isOnline, false)
     assert.ok(peer.lastSeenAt.endsWith('Z'))
   })
+  await receiverHub2.stop()
 
   const pendingMessage = await senderHub.invoke('SendMessage', {
     conversationId, clientMessageId: randomUUID(), content: 'Tin chờ receiver kết nối lại',
@@ -275,7 +311,7 @@ try {
   })
   assert.equal(secondReceiverSession.status, 201)
   const revokedReceiverHub = connect(secondReceiverSession.data.accessToken)
-  await revokedReceiverHub.start()
+  await start(revokedReceiverHub)
   const revoked = await api('/sessions/current', {
     method: 'DELETE', token: secondReceiverSession.data.accessToken,
   })
@@ -300,6 +336,7 @@ try {
 
   console.log(passed + ' checks passed.')
 } finally {
+  for (const heartbeat of heartbeats.values()) heartbeat.stop()
   await Promise.allSettled(hubs.map(connection => connection.stop()))
   if (ownNames) {
     const usersQuery = "SELECT Id FROM dbo.Users WHERE Username IN ('" + names.join("','") + "')"

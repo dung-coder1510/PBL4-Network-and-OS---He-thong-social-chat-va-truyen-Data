@@ -218,7 +218,7 @@ public record ConversationDto(
     string Id, UserSummaryDto OtherUser, DateTimeOffset CreatedAt,
     MessageDto? LastMessage, int UnreadCount);
 
-// Online dựa trên kết nối ChatHub đang sống, không dựa vào tab đang mở đoạn chat.
+// Online dựa trên heartbeat ChatHub hợp lệ trong 60 giây gần nhất.
 public record PresenceDto(int UserId, bool IsOnline, DateTimeOffset? LastSeenAt);
 public record ConversationSubscriptionDto(string ConversationId);
 public record TypingRequestDto(string ConversationId, bool IsTyping);
@@ -447,9 +447,9 @@ Trong các mô tả gửi theo UserId ở trên, `Clients.User` diễn tả fan-
 
 ### 6.4. Vòng đời kết nối và presence
 
-`OnConnectedAsync`: xác thực account enabled; registry ghi UserId → tập ConnectionId của ChatHub; khi chuyển 0 → 1 connection, phát online cho những người được phép theo dõi.
+`OnConnectedAsync`: xác thực account enabled; registry ghi UserId → tập ConnectionId của ChatHub, chưa phát online. Client gọi `Heartbeat` ngay sau khi kết nối/reconnect, rồi mỗi 15 giây. Lệnh không nhận UserId/thời gian từ client; server lấy danh tính từ phiên và đo tuổi nhịp bằng đồng hồ đơn điệu. ACK trả `{ intervalSeconds: 15 }`. Heartbeat đầu tiên chuyển tài khoản sang online và phát cho những người được phép theo dõi.
 
-`OnDisconnectedAsync`: loại đúng connection; user chỉ offline khi tập còn 0 sau grace period đề xuất 10 giây. Nếu reconnect trong khoảng này thì hủy offline. Ghi LastSeenAt theo thời gian server khi thực sự offline. Presence là trạng thái gần đúng do phát hiện mất mạng cần timeout.
+`OnDisconnectedAsync`: đánh dấu đúng connection đã ngắt để không giao tin vào socket đó, giữ nhịp cuối đến hết timeout. Tài khoản online khi còn ít nhất một phiên hợp lệ có nhịp chưa đủ 60 giây. Worker quét mỗi 2 giây; hết nhịp thì phát offline và ghi LastSeenAt theo giờ UTC server. Reconnect trong thời gian chờ không phát cặp offline/online. Đăng xuất thu hồi phiên ngay; phiên khác có nhịp hợp lệ vẫn giữ online. Keep-alive SignalR không gia hạn nhịp ứng dụng. Chi tiết cấu hình và kiểm thử nằm trong [module cuộc trò chuyện](conversations.md#onlineoffline-bằng-heartbeat).
 
 Chỉ đếm ChatHub cho presence, không cộng SignalingHub thành một “người online” nữa. Watcher hợp lệ là user có người đó trong Contacts hoặc cùng DirectConversation; khi thay danh bạ, cập nhật subscription server. Không broadcast danh sách online toàn hệ thống.
 

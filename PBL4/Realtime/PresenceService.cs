@@ -1,4 +1,3 @@
-using System.Globalization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using PBL4.Contracts;
@@ -6,29 +5,65 @@ using PBL4.Data;
 
 namespace PBL4.Realtime;
 
-public sealed class PresenceService(AppDbContext db, PresenceTracker tracker,
+public sealed class PresenceService(IServiceScopeFactory scopes, PresenceTracker tracker,
     IHubContext<ChatHub, IChatClient> hub)
 {
-    public Task NotifyOnlineAsync(int userId, CancellationToken ct) =>
-        NotifyAsync(userId, true, null, ct);
+    private readonly SemaphoreSlim transitions = new(1, 1);
+    private readonly Dictionary<int, PresenceDto> pendingChanges = [];
 
-    public async Task NotifyDisconnectedAsync(int userId, CancellationToken ct)
+    public async Task RecordHeartbeatAsync(int userId, string connectionId, CancellationToken ct)
     {
-        var lastSeenAt = DateTime.UtcNow;
-        await db.Users.Where(u => u.Id == userId)
-            .ExecuteUpdateAsync(setters => setters.SetProperty(u => u.LastSeenAt, lastSeenAt), ct);
-        await NotifyAsync(userId, false, lastSeenAt, ct);
+        await transitions.WaitAsync(ct);
+        try
+        {
+            if (tracker.RecordHeartbeat(userId, connectionId))
+                pendingChanges[userId] = new PresenceDto(userId, true, null);
+            await PublishPendingAsync(CancellationToken.None);
+        }
+        finally { transitions.Release(); }
+    }
+
+    public async Task CheckTimeoutsAsync(CancellationToken ct)
+    {
+        await transitions.WaitAsync(ct);
+        try
+        {
+            foreach (var userId in tracker.CheckTimeouts())
+                pendingChanges[userId] = new PresenceDto(userId, false, DateTime.UtcNow);
+            await PublishPendingAsync(ct);
+        }
+        finally { transitions.Release(); }
     }
 
     public async Task RevokeSessionAsync(int userId, string sessionId, CancellationToken ct)
     {
-        if (tracker.RevokeSession(userId, sessionId))
-            await NotifyDisconnectedAsync(userId, ct);
+        await transitions.WaitAsync(ct);
+        try
+        {
+            if (tracker.RevokeSession(userId, sessionId))
+                pendingChanges[userId] = new PresenceDto(userId, false, DateTime.UtcNow);
+            await PublishPendingAsync(CancellationToken.None);
+        }
+        finally { transitions.Release(); }
+    }
+
+    private async Task PublishPendingAsync(CancellationToken ct)
+    {
+        foreach (var (userId, change) in pendingChanges.ToArray())
+        {
+            await NotifyAsync(userId, change.IsOnline, change.LastSeenAt, ct);
+            pendingChanges.Remove(userId);
+        }
     }
 
     private async Task NotifyAsync(int userId, bool isOnline, DateTime? lastSeenAt,
         CancellationToken ct)
     {
+        await using var scope = scopes.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        if (!isOnline)
+            await db.Users.Where(user => user.Id == userId)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(user => user.LastSeenAt, lastSeenAt), ct);
         var peers = await db.DirectConversations.AsNoTracking()
             .Where(c => c.UserAID == userId || c.UserBID == userId)
             .Select(c => c.UserAID == userId ? c.UserBID : c.UserAID)

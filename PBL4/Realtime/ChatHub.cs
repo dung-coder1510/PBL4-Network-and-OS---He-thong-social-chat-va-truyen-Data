@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using PBL4.Contracts;
 using PBL4.Data;
 using PBL4.Services;
@@ -12,7 +13,7 @@ namespace PBL4.Realtime;
 [Authorize]
 public sealed class ChatHub(MessageService messages, MessageReceiptService receipts,
     AppDbContext db, PresenceTracker presence, PresenceService presenceService,
-    TypingRateLimiter typingLimiter) : Hub<IChatClient>
+    TypingRateLimiter typingLimiter, IOptions<HeartbeatOptions> heartbeatOptions) : Hub<IChatClient>
 {
     private int CurrentUserId => int.Parse(Context.User!.FindFirstValue("sub")!,
         CultureInfo.InvariantCulture);
@@ -47,20 +48,25 @@ public sealed class ChatHub(MessageService messages, MessageReceiptService recei
 
     public Task StopTyping(TypingRequestDto request) => SetTyping(request, false);
 
+    public async Task<HeartbeatAckDto> Heartbeat()
+    {
+        await presenceService.RecordHeartbeatAsync(CurrentUserId, Context.ConnectionId,
+            Context.ConnectionAborted);
+        return new HeartbeatAckDto(heartbeatOptions.Value.IntervalSeconds);
+    }
+
     public override async Task OnConnectedAsync()
     {
         var userId = CurrentUserId;
         var sessionId = Context.User!.FindFirstValue("sid")!;
-        if (presence.Connect(userId, sessionId, Context.ConnectionId))
-            await presenceService.NotifyOnlineAsync(userId, Context.ConnectionAborted);
+        presence.Connect(userId, sessionId, Context.ConnectionId);
         await base.OnConnectedAsync();
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         var userId = CurrentUserId;
-        if (presence.Disconnect(userId, Context.ConnectionId))
-            await presenceService.NotifyDisconnectedAsync(userId, CancellationToken.None);
+        presence.Disconnect(userId, Context.ConnectionId);
         await base.OnDisconnectedAsync(exception);
     }
 
