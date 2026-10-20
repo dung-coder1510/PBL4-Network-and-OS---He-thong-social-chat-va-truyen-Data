@@ -188,6 +188,9 @@ Code nằm ở:
 - Khung kết thúc có đến sau khi nhận đủ byte không.
 
 B ghép các phần thành `Blob`, tính lại SHA-256 và so với hash A đã gửi.
+Trước khi xác nhận, B chờ metadata `transferring` từ server để dùng đúng
+RowVersion mới. Bước này xử lý tình huống dữ liệu WebRTC đến trước thông
+báo SignalR; hủy, disconnect hoặc timeout sẽ dừng việc chờ.
 Nếu khớp và đủ byte, B gọi `CompleteFile` với số byte và hash đã kiểm tra.
 
 Server kiểm tra quyền của tab nhận, đối chiếu số byte/hash và chuyển
@@ -205,6 +208,9 @@ Code nằm ở:
 - `receiveEnd()` trong
   [fileTransfers.js](../frontend/src/services/fileTransfers.js): kiểm tra SHA-256,
   gọi `CompleteFile` và tạo URL tải xuống.
+- `waitForTransferring()` trong
+  [fileTransferState.js](../frontend/src/services/fileTransferState.js): chờ
+  đúng trạng thái trước khi xác nhận, có abort và timeout.
 - Nhánh `complete` trong `ActAsync()` của
   [FileTransferService.cs](../PBL4/Services/FileTransferService.cs).
 - Nút **Tải xuống** trong [FilesPage.jsx](../frontend/src/pages/FilesPage.jsx).

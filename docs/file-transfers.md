@@ -50,6 +50,9 @@ SDP/ICE chỉ chuyển đến tab đã chọn; các tab khác chỉ nhận metad
 - Receiver từ chối chunk lặp, đảo thứ tự, quá lớn, vượt tổng byte hoặc kết thúc sớm.
 - Sender đọc từng lát file; khi `bufferedAmount > 256 KiB` thì chờ xuống
   `64 KiB`, có hủy và timeout 30 giây. Không nạp toàn file vào hàng đợi DataChannel.
+- Trước `CompleteFile`, receiver chờ metadata `transferring` từ server để dùng
+  RowVersion mới. Dữ liệu WebRTC có thể đến trước thông báo SignalR; hủy,
+  disconnect hoặc timeout sẽ dừng việc chờ và không xác nhận hoàn tất.
 - Receiver ghép Blob, tính SHA-256 rồi gọi `CompleteFile`. Server chỉ đối chiếu
   **hash do receiver báo** với hash đã thỏa thuận, không tự đọc hay hash nội dung file.
   SHA-256 không phải công cụ phát hiện mã độc.
@@ -134,6 +137,7 @@ ICE tối đa 4.096 ký tự, 128 candidate mỗi phía/phiên.
 Backend: `Services/FileTransferService.cs`, `Realtime/FileTransferMonitor.cs`,
 `Realtime/ChatHub.cs`, `Controllers/FilesController.cs`.
 Frontend: `services/fileProtocol.js` (frame/hash/backpressure),
+`services/fileTransferState.js` (chờ đồng bộ trạng thái, hủy và timeout),
 `services/fileTransfers.js` (WebRTC/lifecycle), `realtime/FileTransferProvider.jsx`,
 `pages/FilesPage.jsx`.
 
@@ -142,7 +146,7 @@ Frontend: `services/fileProtocol.js` (frame/hash/backpressure),
 Không cần server:
 
 ```powershell
-node --test tests/file-protocol.mjs tests/frontend-heartbeat.mjs
+node --test tests/file-protocol.mjs tests/file-transfer-state.mjs tests/frontend-heartbeat.mjs
 dotnet run --project tests/presence/PresenceChecks.csproj
 ```
 
@@ -169,6 +173,10 @@ nó mô phỏng SDP/hash, không thay thế bài truyền byte bằng browser.
 - Không có lỗi JavaScript chưa xử lý trong các ca trên.
 
 10 nhóm kiểm tra API/SignalR và 6 bài protocol đều qua. 9 bài presence và
-5 bài heartbeat frontend cũng qua. Test presence còn cảnh báo NuGet có sẵn
+5 bài heartbeat frontend cũng qua. Có thêm 8 bài chờ trạng thái, kiểm tra
+metadata đến chậm, phiên kết thúc, abort, timeout và dọn listener.
+Kiểm tra browser với `transferring` đến chậm 2 giây: file 4 KiB và file rỗng
+vẫn hoàn tất; hủy trong lúc chờ không tạo file tải xuống.
+Test presence còn cảnh báo NuGet có sẵn
 cho `System.Security.Cryptography.Pkcs 9.0.11`; tính năng này không thay đổi dependency đó.
 Chưa đo khả năng chịu tải nhiều phiên file, RAM dài hạn hoặc kiểm thử TURN/WAN.

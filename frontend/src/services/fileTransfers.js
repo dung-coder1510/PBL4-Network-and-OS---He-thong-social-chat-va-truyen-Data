@@ -1,4 +1,5 @@
 import { request } from './apiClient.js'
+import { waitForTransferring } from './fileTransferState.js'
 import {
   BUFFER_LOW, CHUNK_BYTES, MAX_FILE_BYTES, createFileReceiver, encodeChunk, sha256, waitForBuffer,
 } from './fileProtocol.js'
@@ -15,13 +16,16 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
   const peers = new Map()
   const downloads = new Map()
   const starting = new Map()
+  const changes = new EventTarget()
   const abort = new AbortController()
   let configuration
   let disposed = false
   let nextCursor = null
   let loadingPage = false
   const emit = () => {
-    if (!disposed) onChange({
+    if (disposed) return
+    changes.dispatchEvent(new Event('change'))
+    onChange({
       items: [...transfers.values()].sort((left, right) => BigInt(left.id) > BigInt(right.id) ? -1 : 1),
       nextCursor,
     })
@@ -123,6 +127,8 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     peer.verifying = true
     const blob = peer.receiver.finish()
     const verifiedSha256Hex = await sha256(await blob.arrayBuffer())
+    if (peer.abort.signal.aborted || disposed) return
+    await waitForTransferring(() => transfers.get(id), changes, peer.abort.signal)
     if (peer.abort.signal.aborted || disposed) return
     const current = transfers.get(id)
     if (verifiedSha256Hex !== current.sha256Hex) throw new Error('SHA-256 không khớp; tệp đã bị loại bỏ.')
