@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   acknowledgeDelivered, createChatConnection, listenForConversationChanges, listenForMessages,
-  startChatConnection, stopChatConnection,
+  sendHeartbeat, startChatConnection, stopChatConnection,
 } from '../services/chatConnection.js'
+import { createHeartbeatLoop } from '../services/heartbeat.js'
 import { conversationsApi } from '../services/conversationsApi.js'
 import { ChatRealtimeContext } from './chatRealtimeContext.js'
 
@@ -65,18 +66,34 @@ export function ChatRealtimeProvider({ token, user, onSessionExpired, children }
     }
 
     activeConnection = createChatConnection(token, {
-      onReconnecting: () => setConnectionState('connecting'),
+      onReconnecting: () => {
+        heartbeat.stop()
+        setConnectionState('connecting')
+      },
       onReconnected: () => {
+        if (disposed) return
+        heartbeat.start()
         setConnectionState('connected')
         setConnectionError('')
         void requestSynchronization()
       },
       onClosed: failure => {
+        heartbeat.stop()
+        if (disposed) return
         setConnectionState('disconnected')
         if (isAuthenticationError(failure)) onSessionExpired()
         else setConnectionError('Kết nối tin nhắn đã ngắt. Bạn hãy kết nối lại.')
       },
     })
+    const heartbeat = createHeartbeatLoop(() => sendHeartbeat(activeConnection), failure => {
+      if (isAuthenticationError(failure)) onSessionExpired()
+    })
+    function resumeHeartbeat() {
+      if (!disposed && document.visibilityState === 'visible' &&
+          activeConnection.state === 'Connected') heartbeat.start()
+    }
+    document.addEventListener('visibilitychange', resumeHeartbeat)
+    window.addEventListener('focus', resumeHeartbeat)
     queueMicrotask(() => {
       if (!disposed) setConnection(activeConnection)
     })
@@ -87,6 +104,7 @@ export function ChatRealtimeProvider({ token, user, onSessionExpired, children }
     const removeConversationListener = listenForConversationChanges(activeConnection, notifySync)
     startChatConnection(activeConnection).then(async () => {
       if (disposed) return
+      heartbeat.start()
       setConnectionState('connected')
       await requestSynchronization()
     }).catch(failure => {
@@ -97,6 +115,9 @@ export function ChatRealtimeProvider({ token, user, onSessionExpired, children }
     })
     return () => {
       disposed = true
+      heartbeat.stop()
+      document.removeEventListener('visibilitychange', resumeHeartbeat)
+      window.removeEventListener('focus', resumeHeartbeat)
       controller.abort()
       removeMessageListener()
       removeConversationListener()

@@ -42,4 +42,8 @@ public sealed record TypingStateDto(string ConversationId, int UserId, bool IsTy
 
 public sealed record PresenceDto(int UserId, bool IsOnline, DateTime? LastSeenAt);
 
+<<<<<<< HEAD
 public sealed record HeartbeatAckDto(int IntervalSeconds);
+=======
+public sealed record HeartbeatAckDto(int IntervalSeconds);
+>>>>>>> d12091cdb02256a7635b50e50fc08efa47312319

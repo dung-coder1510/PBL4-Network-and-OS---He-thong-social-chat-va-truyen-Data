@@ -33,6 +33,47 @@ Hộp tìm người dùng dialog native, giữ focus trong hộp và đóng bằ
 khi không có thao tác tạo đang chạy. Truy vấn tìm kiếm có debounce 300 ms
 và hủy request cũ, tránh kết quả cũ ghi đè kết quả mới.
 
+## Online/offline bằng heartbeat
+
+Ứng dụng tự gửi lệnh `Heartbeat` trên `ChatHub` ngay sau khi kết nối hoặc
+kết nối lại, sau đó mỗi 15 giây. Server trả `{ intervalSeconds: 15 }` làm ACK
+và hướng dẫn chu kỳ tiếp theo. Danh tính lấy từ phiên đã xác thực; client
+không gửi UserId hoặc thời gian để server tin theo.
+
+Kết nối mới chưa có heartbeat không được tính online. Server giữ nhịp cuối
+của từng kết nối trong RAM, dùng đồng hồ đơn điệu để đo thời gian đã trôi qua.
+Tài khoản còn ít nhất một heartbeat hợp lệ chưa đủ 60 giây thì vẫn online.
+Tác vụ `HeartbeatMonitor` quét mỗi 2 giây: hết 60 giây không nhận nhịp thì
+chuyển offline, lưu `LastSeenAt` theo giờ UTC server và phát `PresenceChanged`.
+Thông báo thường tới trong khoảng 60–62 giây từ nhịp cuối, có thể lâu hơn nếu
+server bận hoặc đường truyền gặp lỗi.
+
+Đóng tab hoặc SignalR phát hiện mất kết nối vẫn giữ thời gian chờ trên;
+không gửi sự kiện offline ngay. Reconnect trong thời gian chờ tránh nhấp nháy
+online/offline. Đăng xuất thu hồi phiên ngay; nếu còn phiên khác có heartbeat
+hợp lệ thì tài khoản vẫn online. Chỉ phát sự kiện khi trạng thái thay đổi.
+
+Keep-alive nội bộ của SignalR không thay thế heartbeat ứng dụng. Một socket
+còn mở nhưng không gửi `Heartbeat` cũng hết hạn presence. Danh sách socket
+để giao tin tách khỏi trạng thái presence; hết hạn heartbeat không tự đóng
+socket. Frontend dừng bộ đếm khi ngắt kết nối/đăng xuất, gửi lại khi reconnect
+hoặc trở về tab đang hiển thị. Trình duyệt vẫn có thể làm chậm bộ đếm hoặc
+đóng băng tab nền, nên trạng thái phản ánh khả năng liên lạc gần đây.
+
+Cấu hình `Heartbeat` có `IntervalSeconds` (15), `TimeoutSeconds` (60) và
+`CheckIntervalSeconds` (2); xem `PBL4/appsettings.example.json`. Nếu cấu hình
+riêng của máy chưa có mục này, backend dùng các giá trị mặc định trên.
+
+Kiểm tra không cần database:
+
+```powershell
+dotnet run --project tests/presence/PresenceChecks.csproj
+node --test tests/frontend-heartbeat.mjs
+```
+
+`tests/messages.integration.mjs` kiểm tra cả SignalR thật: dừng heartbeat
+trong khi giữ socket sống, chờ đủ một phút và kiểm tra sự kiện offline.
+
 ## REST API
 
 Mọi endpoint dưới đây đều yêu cầu `Authorization: Bearer <accessToken>`.

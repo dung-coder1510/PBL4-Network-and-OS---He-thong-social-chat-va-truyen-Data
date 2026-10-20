@@ -13,8 +13,12 @@ namespace PBL4.Realtime;
 [Authorize]
 public sealed class ChatHub(MessageService messages, MessageReceiptService receipts,
     AppDbContext db, PresenceTracker presence, PresenceService presenceService,
+<<<<<<< HEAD
     TypingRateLimiter typingLimiter, IOptions<HeartbeatOptions> heartbeatOptions,
     FileTransferService files) : Hub<IChatClient>
+=======
+    TypingRateLimiter typingLimiter, IOptions<HeartbeatOptions> heartbeatOptions) : Hub<IChatClient>
+>>>>>>> d12091cdb02256a7635b50e50fc08efa47312319
 {
     private int CurrentUserId => int.Parse(Context.User!.FindFirstValue("sub")!,
         CultureInfo.InvariantCulture);
@@ -49,6 +53,7 @@ public sealed class ChatHub(MessageService messages, MessageReceiptService recei
 
     public Task StopTyping(TypingRequestDto request) => SetTyping(request, false);
 
+<<<<<<< HEAD
     public Task<FileTransferDto> OfferFile(OfferFileDto request) =>
         files.OfferAsync(CurrentUserId, Context.ConnectionId, request);
     public Task<FileTransferDto> AcceptFile(FileActionDto request) =>
@@ -67,6 +72,8 @@ public sealed class ChatHub(MessageService messages, MessageReceiptService recei
     public Task SendFileSignal(FileSignalDto request) =>
         files.SignalAsync(CurrentUserId, Context.ConnectionId, request);
 
+=======
+>>>>>>> d12091cdb02256a7635b50e50fc08efa47312319
     public async Task<HeartbeatAckDto> Heartbeat()
     {
         await presenceService.RecordHeartbeatAsync(CurrentUserId, Context.ConnectionId,
@@ -86,7 +93,10 @@ public sealed class ChatHub(MessageService messages, MessageReceiptService recei
     {
         var userId = CurrentUserId;
         presence.Disconnect(userId, Context.ConnectionId);
+<<<<<<< HEAD
         await files.SweepAsync(Context.ConnectionId);
+=======
+>>>>>>> d12091cdb02256a7635b50e50fc08efa47312319
         await base.OnDisconnectedAsync(exception);
     }
 
