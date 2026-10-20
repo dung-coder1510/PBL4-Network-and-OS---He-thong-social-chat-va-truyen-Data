@@ -1,8 +1,6 @@
-<<<<<<< HEAD
-﻿using Microsoft.Extensions.Options;
-=======
+
 using Microsoft.Extensions.Options;
->>>>>>> d12091cdb02256a7635b50e50fc08efa47312319
+
 
 namespace PBL4.Realtime;
 
