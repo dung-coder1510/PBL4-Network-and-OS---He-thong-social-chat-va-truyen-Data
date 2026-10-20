@@ -1,4 +1,4 @@
-    
+
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.SignalR;
 using PBL4.Data;
@@ -33,9 +33,21 @@ namespace PBL4
             builder.Services.AddSignalR(options => options.AddFilter<RealtimeSessionFilter>());
             builder.Services.AddScoped<MessageService>();
             builder.Services.AddScoped<MessageReceiptService>();
-            builder.Services.AddScoped<PresenceService>();
+            builder.Services.AddSingleton<FileTransferService>();
+            builder.Services.AddHostedService<FileTransferMonitor>();
+            builder.Services.AddSingleton<PresenceService>();
             builder.Services.AddScoped<RealtimeSessionFilter>();
             builder.Services.AddSingleton<PresenceTracker>();
+            builder.Services.AddSingleton(TimeProvider.System);
+            builder.Services.AddOptions<HeartbeatOptions>()
+                .BindConfiguration("Heartbeat")
+                .Validate(options => options.IntervalSeconds > 0 &&
+                    options.TimeoutSeconds > options.IntervalSeconds &&
+                    options.CheckIntervalSeconds > 0 &&
+                    options.CheckIntervalSeconds <= options.TimeoutSeconds,
+                    "Heartbeat intervals must be positive and timeout must exceed the send interval.")
+                .ValidateOnStart();
+            builder.Services.AddHostedService<HeartbeatMonitor>();
             builder.Services.AddSingleton<TypingRateLimiter>();
             builder.Services.AddSingleton<IUserIdProvider, SubClaimUserIdProvider>();
             // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi

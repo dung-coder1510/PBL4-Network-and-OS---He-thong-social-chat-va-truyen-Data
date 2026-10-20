@@ -41,3 +41,5 @@ public sealed class TypingRequestDto
 public sealed record TypingStateDto(string ConversationId, int UserId, bool IsTyping);
 
 public sealed record PresenceDto(int UserId, bool IsOnline, DateTime? LastSeenAt);
+
+public sealed record HeartbeatAckDto(int IntervalSeconds);

@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using PBL4.Contracts;
 using PBL4.Data;
 using PBL4.Services;
@@ -12,7 +13,8 @@ namespace PBL4.Realtime;
 [Authorize]
 public sealed class ChatHub(MessageService messages, MessageReceiptService receipts,
     AppDbContext db, PresenceTracker presence, PresenceService presenceService,
-    TypingRateLimiter typingLimiter) : Hub<IChatClient>
+    TypingRateLimiter typingLimiter, IOptions<HeartbeatOptions> heartbeatOptions,
+    FileTransferService files) : Hub<IChatClient>
 {
     private int CurrentUserId => int.Parse(Context.User!.FindFirstValue("sub")!,
         CultureInfo.InvariantCulture);
@@ -47,20 +49,44 @@ public sealed class ChatHub(MessageService messages, MessageReceiptService recei
 
     public Task StopTyping(TypingRequestDto request) => SetTyping(request, false);
 
+    public Task<FileTransferDto> OfferFile(OfferFileDto request) =>
+        files.OfferAsync(CurrentUserId, Context.ConnectionId, request);
+    public Task<FileTransferDto> AcceptFile(FileActionDto request) =>
+        files.ActAsync(CurrentUserId, Context.ConnectionId, request, "accept");
+    public Task<FileTransferDto> RejectFile(FileActionDto request) =>
+        files.ActAsync(CurrentUserId, Context.ConnectionId, request, "reject");
+    public Task<FileTransferDto> BeginFileTransfer(FileActionDto request) =>
+        files.ActAsync(CurrentUserId, Context.ConnectionId, request, "begin");
+    public Task<FileTransferDto> CancelFile(FileActionDto request) =>
+        files.ActAsync(CurrentUserId, Context.ConnectionId, request, "cancel");
+    public Task<FileTransferDto> FailFile(FileActionDto request) =>
+        files.ActAsync(CurrentUserId, Context.ConnectionId, request, "fail");
+    public Task<FileTransferDto> CompleteFile(CompleteFileDto request) =>
+        files.ActAsync(CurrentUserId, Context.ConnectionId,
+            new FileActionDto(request.TransferId, request.ExpectedVersion), "complete", request);
+    public Task SendFileSignal(FileSignalDto request) =>
+        files.SignalAsync(CurrentUserId, Context.ConnectionId, request);
+
+    public async Task<HeartbeatAckDto> Heartbeat()
+    {
+        await presenceService.RecordHeartbeatAsync(CurrentUserId, Context.ConnectionId,
+            Context.ConnectionAborted);
+        return new HeartbeatAckDto(heartbeatOptions.Value.IntervalSeconds);
+    }
+
     public override async Task OnConnectedAsync()
     {
         var userId = CurrentUserId;
         var sessionId = Context.User!.FindFirstValue("sid")!;
-        if (presence.Connect(userId, sessionId, Context.ConnectionId))
-            await presenceService.NotifyOnlineAsync(userId, Context.ConnectionAborted);
+        presence.Connect(userId, sessionId, Context.ConnectionId);
         await base.OnConnectedAsync();
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         var userId = CurrentUserId;
-        if (presence.Disconnect(userId, Context.ConnectionId))
-            await presenceService.NotifyDisconnectedAsync(userId, CancellationToken.None);
+        presence.Disconnect(userId, Context.ConnectionId);
+        await files.SweepAsync(Context.ConnectionId);
         await base.OnDisconnectedAsync(exception);
     }
 

@@ -9,4 +9,6 @@ public interface IChatClient
     Task MessageStatusChanged(MessageStatusDto status);
     Task PresenceChanged(PresenceDto presence);
     Task TypingChanged(TypingStateDto typing);
+    Task FileChanged(FileTransferDto transfer);
+    Task FileSignal(FileSignalDto signal);
 }
