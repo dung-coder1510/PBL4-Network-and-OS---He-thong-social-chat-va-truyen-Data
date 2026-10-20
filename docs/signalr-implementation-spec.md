@@ -4,7 +4,7 @@ Ngày: 30/09/2026. Phiên bản: 1.1 — cập nhật chính sách LAN, lưu tr�
 
 Nhóm: Nguyễn Hoàng Dũng, Nguyễn Hoàng Duy, Nguyễn Thành Trung.
 
-Công nghệ bám theo mã nguồn: ASP.NET Core **.NET 10**, EF Core, SQL Server, React + JavaScript; WebRTC cho đường truyền P2P. Bước 1–2 đã được lập trình: chat web qua SignalR, lưu/lịch sử SQL, ACK/read, unread, retry chống trùng, presence/typing, reconnect và danh bạ. Signaling WebRTC, call/file, desktop và sync vẫn là thiết kế. Đoạn code ở các phần tương lai là hợp đồng/mẫu, không phải toàn bộ chức năng đã chạy.
+Công nghệ bám theo mã nguồn: ASP.NET Core **.NET 10**, EF Core, SQL Server, React + JavaScript; WebRTC cho đường truyền P2P. Bước 1–2 đã được lập trình: chat web qua SignalR, lưu/lịch sử SQL, ACK/read, unread, retry chống trùng, presence/typing, reconnect và danh bạ. File Web ↔ Web qua WebRTC đã được triển khai; xem [hợp đồng và hướng dẫn thực tế](file-transfers.md). MVP báo hiệu file ngay trên ChatHub, gắn đúng connection gửi/nhận; SignalingHub riêng, call, desktop và sync bên dưới vẫn là thiết kế. Đoạn code ở các phần tương lai là hợp đồng/mẫu, không phải toàn bộ chức năng đã chạy.
 
 ## Cách đọc
 

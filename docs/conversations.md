@@ -10,7 +10,8 @@ danh bạ trước.
 `ChatHub` hiện hoàn thành nghiệp vụ chat web của bước 2: ACK đã nhận/đã đọc,
 retry giữ nguyên `ClientMessageId`, unread, presence nhiều kết nối, typing và
 reconnect tải bù từ REST. Conversation mới, preview và trạng thái tin được cập
-nhật realtime, không cần tải lại trang. Chưa có WebRTC hoặc tin local của desktop.
+nhật realtime, không cần tải lại trang. WebRTC đã được dùng cho
+[truyền file web](file-transfers.md); text vẫn qua SignalR, tin local desktop chưa có.
 
 ## Cách sử dụng
 

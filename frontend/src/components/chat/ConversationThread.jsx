@@ -9,12 +9,16 @@ function formatTime(value) {
 export default function ConversationThread({ conversation, loading, error, messages,
   currentUserId, historyLoading, historyError, hasOlder, connectionState, connectionError,
   peerTyping, onTypingChange, onBack, onRetry, onRetryHistory, onLoadOlder, onSend,
-  onRetryMessage, onReconnect, onCreate }) {
+  onRetryMessage, onReconnect, onCreate, onSendFile }) {
   const peer = conversation?.peer
   const messageList = useRef(null)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
+  const fileInput = useRef(null)
+  const [sendingFile, setSendingFile] = useState(false)
+  const [fileError, setFileError] = useState('')
+  const [offeredFile, setOfferedFile] = useState('')
 
   useLayoutEffect(() => {
     if (messageList.current) messageList.current.scrollTop = messageList.current.scrollHeight
@@ -43,6 +47,23 @@ export default function ConversationThread({ conversation, loading, error, messa
       await onRetryMessage(message)
     } catch (failure) {
       setSendError(failure.message || 'Chưa gửi lại được tin nhắn.')
+    }
+  }
+
+  async function selectFile(event) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file || sendingFile) return
+    setSendingFile(true)
+    setFileError('')
+    setOfferedFile('')
+    try {
+      await onSendFile(file)
+      setOfferedFile(file.name)
+    } catch (failure) {
+      setFileError(failure.message || 'Chưa gửi được lời mời nhận tệp.')
+    } finally {
+      setSendingFile(false)
     }
   }
 
@@ -92,6 +113,11 @@ export default function ConversationThread({ conversation, loading, error, messa
           <form className="composer-wrap" onSubmit={submit}>
             {connectionError && <div className="composer-alert" role="alert">{connectionError} <button type="button" onClick={onReconnect}>Kết nối lại</button></div>}
             {sendError && <p className="composer-alert" role="alert">{sendError}</p>}
+            {fileError && <p className="composer-alert" role="alert">{fileError}</p>}
+            {sendingFile && <p className="composer-file-notice" role="status">Đang chuẩn bị tệp và tính SHA-256…</p>}
+            {offeredFile && <p className="composer-file-notice" role="status">
+              Đã gửi lời mời nhận “{offeredFile}” cho {peer.displayName}. <a href="#files">Xem tiến độ trong mục Tệp</a>.
+            </p>}
             <div className="composer">
               <textarea value={draft} onChange={event => {
                 setDraft(event.target.value)
@@ -105,7 +131,18 @@ export default function ConversationThread({ conversation, loading, error, messa
                   }
                 }}
                 placeholder={peer.isDisabled ? 'Tài khoản này hiện không khả dụng.' : connectionState === 'connected' ? `Nhắn gì đó cho ${peer.displayName}…` : 'Đang chờ kết nối tin nhắn…'} />
-              <div className="composer-bottom"><span className="composer-count">{draft.length}/4000</span>
+              <div className="composer-bottom">
+                <div className="composer-file-tools">
+                  <input ref={fileInput} type="file" hidden aria-label={`Chọn tệp gửi cho ${peer.displayName}`}
+                    disabled={sendingFile || peer.isDisabled || connectionState !== 'connected'} onChange={selectFile} />
+                  <button className="btn composer-file-button" type="button"
+                    onClick={() => fileInput.current?.click()}
+                    disabled={sendingFile || peer.isDisabled || connectionState !== 'connected'}
+                    title="Gửi tệp tối đa 100 MiB" aria-label={`Gửi file cho ${peer.displayName}`}>
+                    <Icon name="paperclip" size="ico-sm" />{sendingFile ? 'Đang chuẩn bị…' : 'Gửi file'}
+                  </button>
+                  <span className="composer-count">{draft.length}/4000</span>
+                </div>
                 <button className="send-btn" type="submit" disabled={!draft.trim() || sending || peer.isDisabled || connectionState !== 'connected'} aria-label="Gửi tin nhắn"><Icon name="send" /></button>
               </div>
             </div>

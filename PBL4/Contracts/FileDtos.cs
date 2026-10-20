@@ -1,4 +1,4 @@
-﻿namespace PBL4.Contracts;
+namespace PBL4.Contracts;
 
 public sealed record OfferFileDto(string ConversationId, Guid ClientTransferId,
     string FileName, long FileSizeBytes, string Sha256Hex);
@@ -11,4 +11,3 @@ public sealed record FileTransferDto(string Id, Guid ClientTransferId, string Co
     string? VerifiedSha256Hex, string Status, DateTime CreatedAt, DateTime? AcceptedAt,
     DateTime? FinishedAt, string Version, string? SenderConnectionId, string? ReceiverConnectionId);
 public sealed record FilePageDto(IReadOnlyList<FileTransferDto> Items, string? NextCursor);
-
