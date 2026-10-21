@@ -63,6 +63,10 @@ try {
   browser = await chromium.launch({ channel: 'chrome', headless: true })
   const contextA = await browser.newContext()
   const contextB = await browser.newContext()
+  // Keep this regression on the SignalR path. WebRTC has its own text-p2p.e2e.mjs.
+  for (const context of [contextA, contextB]) await context.addInitScript(() => {
+    Object.defineProperty(window, 'RTCPeerConnection', { value: undefined, configurable: true })
+  })
   // Tái hiện trình duyệt mở qua IP LAN/HTTP, nơi randomUUID có thể không được cung cấp.
   await contextB.addInitScript(() => {
     Object.defineProperty(Crypto.prototype, 'randomUUID', { value: undefined, configurable: true })
@@ -96,7 +100,12 @@ try {
 
   await pageA.locator('textarea').fill('Tin nhắn realtime từ A')
   await pageA.locator('textarea').press('Enter')
-  await snapshotCaptured
+  let captureTimeout
+  try {
+    await Promise.race([snapshotCaptured, new Promise((_, reject) => {
+      captureTimeout = setTimeout(() => reject(new Error('Conversation snapshot was not requested.')), 15000)
+    })])
+  } finally { clearTimeout(captureTimeout) }
   await pageA.locator('textarea').fill('Tin nhắn thứ hai khi B đang tải conversation')
   await pageA.locator('textarea').press('Enter')
   const secondMessageFromA = pageA.getByRole('log').locator('.msg.self')
@@ -190,6 +199,10 @@ try {
   await contactRow.getByRole('button', { name: 'Xóa' }).click()
   await contactRow.waitFor({ state: 'detached' })
   console.log('PASS Step 2 chat states, reconnect, UUID fallback and one-way contacts UI.')
+} catch (error) {
+  for (const page of browser?.contexts().flatMap(context => context.pages()) || [])
+    console.error('SignalR regression state:', await page.locator('body').innerText().catch(() => '(closed)'))
+  throw error
 } finally {
   await browser?.close()
   if (ownUsers) {

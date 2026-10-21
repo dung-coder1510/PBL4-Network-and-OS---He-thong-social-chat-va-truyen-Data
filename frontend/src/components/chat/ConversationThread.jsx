@@ -1,15 +1,19 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import Avatar from '../Avatar.jsx'
 import Icon from '../Icon.jsx'
+import { textRouteLabel } from '../../services/textProtocol.js'
 
+// Hien timestamp server theo gio dia phuong cua trinh duyet voi dinh dang gio/phut tieng Viet.
 function formatTime(value) {
   return new Date(value).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
 }
 
+// Ve thread, receipt, route va o soan tin; nhan callback xu ly nghiep vu tu ChatPage.
+// Ban nhap nam trong component; key conversation o cha giup reset khi doi nguoi nhan.
 export default function ConversationThread({ conversation, loading, error, messages,
   currentUserId, historyLoading, historyError, hasOlder, connectionState, connectionError,
   peerTyping, onTypingChange, onBack, onRetry, onRetryHistory, onLoadOlder, onSend,
-  onRetryMessage, onReconnect, onCreate, onSendFile }) {
+  onRetryMessage, onReconnect, onCreate, onSendFile, textState }) {
   const peer = conversation?.peer
   const messageList = useRef(null)
   const [draft, setDraft] = useState('')
@@ -20,10 +24,12 @@ export default function ConversationThread({ conversation, loading, error, messa
   const [fileError, setFileError] = useState('')
   const [offeredFile, setOfferedFile] = useState('')
 
+  // Cuon toi cuoi khi doi conversation hoac so tin thay doi, truoc khi trinh duyet ve khung moi.
   useLayoutEffect(() => {
     if (messageList.current) messageList.current.scrollTop = messageList.current.scrollHeight
   }, [conversation?.id, messages.length])
 
+  // Chan submit rong/trung luc dang gui; chi xoa ban nhap sau khi callback gui thanh cong.
   async function submit(event) {
     event.preventDefault()
     const content = draft.trim()
@@ -41,6 +47,7 @@ export default function ConversationThread({ conversation, loading, error, messa
     }
   }
 
+  // Gui lai tin loi bang callback cua cha de tai su dung UUID, dong thoi hien loi neu tiep tuc that bai.
   async function retryMessage(message) {
     setSendError('')
     try {
@@ -50,6 +57,7 @@ export default function ConversationThread({ conversation, loading, error, messa
     }
   }
 
+  // Gui loi moi file cho dung nguoi dang chat, giu nguyen ban nhap va reset input de chon lai cung file.
   async function selectFile(event) {
     const file = event.target.files?.[0]
     event.target.value = ''
@@ -78,6 +86,9 @@ export default function ConversationThread({ conversation, loading, error, messa
           <div className="thread-person"><h2 className="thread-name">{peer.displayName}</h2>
             <p className={`chat-connection-state${peer.isOnline ? ' connected' : ''}`}>
               @{peer.username} · {peerTyping ? 'Đang nhập…' : presenceLabel}
+            </p>
+            <p className="text-route" role="status" data-route={textState?.route || 'signalr'}>
+              {connectionState === 'connected' ? textRouteLabel(textState) : 'Đường truyền text đã ngắt'}
             </p>
           </div></> : <h2 className="thread-name">Trò chuyện</h2>}
       </header>

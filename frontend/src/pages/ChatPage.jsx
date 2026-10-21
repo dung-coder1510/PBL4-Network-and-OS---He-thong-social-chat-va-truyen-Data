@@ -4,35 +4,29 @@ import ConversationThread from '../components/chat/ConversationThread.jsx'
 import NewConversationDialog from '../components/chat/NewConversationDialog.jsx'
 import { conversationsApi } from '../services/conversationsApi.js'
 import {
-  listenForMessages, listenForMessageStatuses, listenForPresence, listenForTyping,
-  markAsRead, sendMessage, setTyping as sendTypingState,
+  listenForMessageStatuses, listenForPresence, listenForTyping,
+  setTyping as sendTypingState,
 } from '../services/chatConnection.js'
 import { useChatRealtime } from '../realtime/chatRealtimeContext.js'
 import { useFileTransfers } from '../realtime/fileTransferContext.js'
 import {
-  applyMessageStatus, applyPresence, createClientMessageId, upsertConversationMessage,
+  applyMessageStatus, applyPresence, createClientMessageId, mergeChatMessages, upsertConversationMessage,
 } from '../utils/chatState.js'
 import '../styles/conversations.css'
 
+// Tao khoa on dinh cho tin o moi duong truyen; sender duoc ghep vao de UUID khong bi nham tai khoan.
 function messageKey(message) {
   return `${message.senderId}:${message.clientMessageId}`
 }
 
-function mergeMessages(current, additions) {
-  const byKey = new Map(current.map(message => [messageKey(message), message]))
-  for (const message of additions) {
-    const old = byKey.get(messageKey(message))
-    byKey.set(messageKey(message), { ...old, ...message })
-  }
-  return [...byKey.values()].sort((a, b) => {
-    const byTime = Date.parse(a.createdAt) - Date.parse(b.createdAt)
-    return byTime || messageKey(a).localeCompare(messageKey(b))
-  })
-}
+const mergeMessages = mergeChatMessages
 
+// Quan ly danh sach conversation, lich su, thao tac gui va read/typing cua trang Chat.
+// Ket noi va nhan tin thuc te nam o provider de doi trang khong lam ngung P2P.
 export default function ChatPage({ token, user, initialConversationId,
   onInitialConversationHandled, onSessionExpired }) {
-  const { connection, connectionState, connectionError, reconnect, subscribeSync } = useChatRealtime()
+  const { connection, connectionState, connectionError, reconnect, subscribeSync,
+    subscribeMessages, ensureTextSession, sendTextMessage, textStates } = useChatRealtime()
   const files = useFileTransfers()
   const [items, setItems] = useState([])
   const itemsRef = useRef([])
@@ -56,7 +50,7 @@ export default function ChatPage({ token, user, initialConversationId,
   const [nextHistoryCursor, setNextHistoryCursor] = useState(null)
   const [historyRevision, setHistoryRevision] = useState(0)
   const connectionRef = useRef(connection)
-  const lastReadRequestRef = useRef(null)
+  const pendingReads = useRef(new Set())
   const typingActiveRef = useRef(false)
   const typingConversationRef = useRef(null)
   const typingStopTimerRef = useRef(null)
@@ -65,7 +59,14 @@ export default function ChatPage({ token, user, initialConversationId,
   const [visibilityRevision, setVisibilityRevision] = useState(0)
   const [showCreate, setShowCreate] = useState(false)
   const [showList, setShowList] = useState(true)
+  const showListRef = useRef(true)
 
+  // Kiem tra thread co thuc su hien theo breakpoint 900px; document visible chua du tren mobile.
+  function threadVisible() {
+    return !window.matchMedia('(max-width: 900px)').matches || !showListRef.current
+  }
+
+  // Cap nhat state va ref danh sach cung luc, de listener bat dong bo doc du lieu moi nhat.
   function changeItems(updater) {
     setItems(current => {
       const next = updater(current)
@@ -74,12 +75,20 @@ export default function ChatPage({ token, user, initialConversationId,
     })
   }
 
+  // Kich hoat danh gia read lai khi doi do hien thi cua tab hoac vuot breakpoint mobile.
   useEffect(() => {
+    // Tang revision de effect read chay lai, khong can tao lai ket noi.
     const changed = () => setVisibilityRevision(value => value + 1)
+    const narrowScreen = window.matchMedia('(max-width: 900px)')
     document.addEventListener('visibilitychange', changed)
-    return () => document.removeEventListener('visibilitychange', changed)
+    narrowScreen.addEventListener('change', changed)
+    return () => {
+      document.removeEventListener('visibilitychange', changed)
+      narrowScreen.removeEventListener('change', changed)
+    }
   }, [])
 
+  // Debounce tim kiem 250ms; trang tiep theo tai ngay va loai conversation trung ID.
   useEffect(() => {
     const controller = new AbortController()
     const timer = setTimeout(async () => {
@@ -105,6 +114,7 @@ export default function ChatPage({ token, user, initialConversationId,
     return () => { clearTimeout(timer); controller.abort() }
   }, [token, query, cursor, revision, onSessionExpired])
 
+  // Tai thong tin conversation dang chon; huy request cu khi nguoi dung doi nguoi nhan.
   useEffect(() => {
     if (!selectedId) return undefined
     const controller = new AbortController()
@@ -121,6 +131,7 @@ export default function ChatPage({ token, user, initialConversationId,
     return () => controller.abort()
   }, [token, selectedId, detailRevision, onSessionExpired])
 
+  // Tai trang lich su va gop voi tin live; ban sao tu REST khong duoc xoa receipt moi hon.
   useEffect(() => {
     if (!selectedId) return undefined
     const controller = new AbortController()
@@ -139,21 +150,25 @@ export default function ChatPage({ token, user, initialConversationId,
     return () => controller.abort()
   }, [token, selectedId, historyBefore, historyRevision, onSessionExpired])
 
+  // Dang ky tin/receipt/presence/typing cho UI; bo listener va timer khi ket noi hoac trang thay doi.
   useEffect(() => {
     if (!connection) return undefined
     let disposed = false
     const pendingConversations = new Map()
     connectionRef.current = connection
 
-    const removeMessageListener = listenForMessages(connection, message => {
+    // Xu ly chung tin P2P/SignalR: doi preview/unread va them vao thread neu dung conversation.
+    const removeMessageListener = subscribeMessages(message => {
       const received = { ...message, sendState: 'sent' }
       const active = selectedIdRef.current === message.conversationId &&
-        document.visibilityState === 'visible'
+        document.visibilityState === 'visible' && threadVisible()
       const knownConversation = itemsRef.current.some(item => item.id === message.conversationId)
       changeItems(current => upsertConversationMessage(current, received, null, {
         currentUserId: user.id, isActive: active,
       }))
 
+      // Neu tin den truoc thong tin conversation, dem tin trong Map va chi goi API chi tiet mot lan.
+      // Snapshot tra ve co the cu hon tin live, nen can ap lai cac tin da dem sau snapshot.
       if (!knownConversation && !queryRef.current.trim()) {
         let pending = pendingConversations.get(message.conversationId)
         if (!pending) {
@@ -169,7 +184,7 @@ export default function ChatPage({ token, user, initialConversationId,
             const bufferedMessages = pendingConversations.get(message.conversationId)?.messages || []
             changeItems(current => {
               const isActive = selectedIdRef.current === message.conversationId &&
-                document.visibilityState === 'visible'
+                document.visibilityState === 'visible' && threadVisible()
               let next = upsertConversationMessage(current,
                 result.lastMessage || bufferedMessages[0] || received, result,
                 { currentUserId: user.id, isActive, fromSnapshot: true })
@@ -188,6 +203,7 @@ export default function ChatPage({ token, user, initialConversationId,
         setMessages(current => mergeMessages(current, [received]))
     })
 
+    // Gop receipt vao thread/preview; exact read dung unread count cua server, khong tu xoa tat ca.
     const removeStatusListener = listenForMessageStatuses(connection, status => {
       setMessages(current => applyMessageStatus(current, status))
       changeItems(current => current.map(item => {
@@ -198,17 +214,19 @@ export default function ChatPage({ token, user, initialConversationId,
           ...item,
           lastMessage,
           unreadCount: status.readAt && status.recipientUserId === user.id
-            ? 0 : item.unreadCount,
+            ? status.unreadCount ?? (status.messageId ? item.unreadCount : 0) : item.unreadCount,
         }
       }))
     })
 
+    // Dong bo trang thai online cua peer trong ca danh sach va header thread dang chon.
     const removePresenceListener = listenForPresence(connection, status => {
       changeItems(current => applyPresence(current, status))
       setConversation(current => current?.peer.id === status.userId
         ? { ...current, peer: { ...current.peer, ...status } } : current)
     })
 
+    // Chi hien typing cua peer dang chon; tu tat sau 4 giay neu khong nhan tin hieu stop.
     const removeTypingListener = listenForTyping(connection, status => {
       if (status.userId === user.id || status.conversationId !== selectedIdRef.current) return
       clearTimeout(peerTypingTimerRef.current)
@@ -227,38 +245,52 @@ export default function ChatPage({ token, user, initialConversationId,
       removeTypingListener()
       if (connectionRef.current === connection) connectionRef.current = null
     }
-  }, [connection, token, onSessionExpired, user.id])
+  }, [connection, subscribeMessages, token, onSessionExpired, user.id])
 
-  useEffect(() => subscribeSync(() => {
-    setLoading(true)
+  // Thu mo P2P khi chon conversation, ket noi lai hoac trang thai peer thay doi.
+  useEffect(() => {
+    if (selectedId && connectionState === 'connected') void ensureTextSession(selectedId)
+  }, [selectedId, connectionState, conversation?.peer.isOnline, ensureTextSession])
+
+  // Lam moi cursor va lich su sau tai bu; silent giu noi dung dang hien de fallback khong nhap nhay.
+  useEffect(() => subscribeSync(silent => {
+    if (!silent) {
+      setLoading(true)
+      changeItems(() => [])
+      setHistoryLoading(Boolean(selectedIdRef.current))
+      setDetailLoading(Boolean(selectedIdRef.current))
+    }
     setError('')
-    changeItems(() => [])
     setCursor(null)
     setNextCursor(null)
     setRevision(value => value + 1)
-    setHistoryLoading(Boolean(selectedIdRef.current))
     setHistoryBefore(null)
     setHistoryRevision(value => value + 1)
-    setDetailLoading(Boolean(selectedIdRef.current))
     setDetailError('')
     setDetailRevision(value => value + 1)
-    lastReadRequestRef.current = null
+    pendingReads.current.clear()
   }), [subscribeSync])
 
+  // Chi read tung tin da luu khi thread thuc su hien; Set chan request trung trong luc dang cho.
+  // Khong read cong don de tin den sau khong danh dau luon cac tin truoc con chua nhan.
   useEffect(() => {
     if (!selectedId || connectionState !== 'connected' ||
-        document.visibilityState !== 'visible') return
-    const latestIncoming = messages.findLast(message =>
-      message.senderId !== user.id && /^\d+$/.test(String(message.id)))
-    if (!latestIncoming?.id || latestIncoming.readAt) return
-    const requestKey = `${selectedId}:${latestIncoming.id}`
-    if (lastReadRequestRef.current === requestKey) return
-    lastReadRequestRef.current = requestKey
-    markAsRead(connectionRef.current, selectedId, latestIncoming.id).catch(() => {
-      if (lastReadRequestRef.current === requestKey) lastReadRequestRef.current = null
-    })
-  }, [messages, selectedId, connectionState, visibilityRevision, user.id])
+        document.visibilityState !== 'visible' || !threadVisible()) return
+    const unread = messages.filter(message => message.senderId !== user.id &&
+      /^\d+$/.test(String(message.id)) && !message.readAt)
+    for (const message of unread) {
+      const requestKey = `${selectedId}:${message.id}`
+      if (pendingReads.current.has(requestKey)) continue
+      pendingReads.current.add(requestKey)
+      void connectionRef.current.invoke('ReadMessage', { conversationId: selectedId, messageId: message.id })
+        .then(status => {
+          if (selectedIdRef.current === message.conversationId)
+            setMessages(current => applyMessageStatus(current, status))
+        }).catch(() => {}).finally(() => pendingReads.current.delete(requestKey))
+    }
+  }, [messages, selectedId, showList, connectionState, visibilityRevision, user.id])
 
+  // Mo conversation duoc truyen tu Danh ba hoac man hinh khac, roi bao da xu ly yeu cau.
   useEffect(() => {
     if (initialConversationId && selectedIdRef.current !== initialConversationId) {
       select(initialConversationId)
@@ -266,6 +298,7 @@ export default function ChatPage({ token, user, initialConversationId,
     }
   }, [initialConversationId, onInitialConversationHandled])
 
+  // Tai lai danh sach tu trang dau, xoa loi va cursor cu de khong ghep sai phan trang.
   function refresh() {
     setLoading(true)
     setError('')
@@ -275,6 +308,7 @@ export default function ChatPage({ token, user, initialConversationId,
     setRevision(value => value + 1)
   }
 
+  // Cap nhat tu khoa va ref cho listener, sau do bat dau lai danh sach tu trang dau.
   function search(value) {
     setLoading(true)
     setError('')
@@ -285,6 +319,7 @@ export default function ChatPage({ token, user, initialConversationId,
     setNextCursor(null)
   }
 
+  // Huy timer typing va gui stop cho conversation cu neu truoc do da bao dang nhap.
   function stopTyping() {
     clearTimeout(typingStopTimerRef.current)
     if (!typingActiveRef.current) return
@@ -296,6 +331,7 @@ export default function ChatPage({ token, user, initialConversationId,
       void sendTypingState(connection, conversationId, false).catch(() => {})
   }
 
+  // Chi gui start khi vua bat dau/doi conversation; dat lai timer stop 2,5 giay khi tiep tuc go.
   function typingChanged(isTyping) {
     const connection = connectionRef.current
     if (!selectedIdRef.current || connectionState !== 'connected' || !connection) return
@@ -312,12 +348,14 @@ export default function ChatPage({ token, user, initialConversationId,
     typingStopTimerRef.current = setTimeout(stopTyping, 2500)
   }
 
+  // Doi conversation, dung typing cu va reset thread/cursor; khong mang ban nhap sang nguoi khac.
   function select(id) {
     stopTyping()
     selectedIdRef.current = id
-    lastReadRequestRef.current = null
+    pendingReads.current.clear()
     setSelectedId(id)
     setPeerTyping(false)
+    showListRef.current = false
     setShowList(false)
     setDetailLoading(true)
     setDetailError('')
@@ -331,6 +369,7 @@ export default function ChatPage({ token, user, initialConversationId,
     setDetailRevision(value => value + 1)
   }
 
+  // Tang revision de chay lai request thong tin conversation sau loi.
   function retryDetail() {
     setDetailLoading(true)
     setDetailError('')
@@ -338,6 +377,7 @@ export default function ChatPage({ token, user, initialConversationId,
     setDetailRevision(value => value + 1)
   }
 
+  // Lay trang conversation tiep theo neu co cursor va khong co request dang tai.
   function loadMore() {
     if (loading || !nextCursor) return
     setLoading(true)
@@ -345,6 +385,7 @@ export default function ChatPage({ token, user, initialConversationId,
     setCursor(nextCursor)
   }
 
+  // Sau khi tao conversation, dong hop thoai, bo loc tim kiem va mo thread vua tao.
   function created(result) {
     setShowCreate(false)
     setQuery('')
@@ -353,12 +394,14 @@ export default function ChatPage({ token, user, initialConversationId,
     select(result.id)
   }
 
+  // Xoa loi lich su va tang revision de thu lai trang dang can tai.
   function retryHistory() {
     setHistoryLoading(true)
     setHistoryError('')
     setHistoryRevision(value => value + 1)
   }
 
+  // Chuyen cursor ve trang tin cu hon; effect lich su se tai va gop vao thread hien tai.
   function loadOlderMessages() {
     if (!nextHistoryCursor || historyLoading) return
     setHistoryLoading(true)
@@ -366,12 +409,15 @@ export default function ChatPage({ token, user, initialConversationId,
     setHistoryBefore(nextHistoryCursor)
   }
 
+  // Hien tin optimistic ngay, gui qua manager va thay bang tin SQL chuan khi co ket qua.
+  // Retry giu UUID cu; luu conversation luc bat dau de response muon khong chen vao thread da doi.
   async function submitMessage(content, existingClientMessageId) {
     const connection = connectionRef.current
     if (!selectedId || !connection || connectionState !== 'connected')
       throw new Error('Kết nối tin nhắn chưa sẵn sàng.')
 
     const clientMessageId = existingClientMessageId || createClientMessageId()
+    const sendingConversationId = selectedId
     const optimistic = {
       id: `local:${clientMessageId}`, clientMessageId, conversationId: selectedId,
       senderId: user.id, content, createdAt: new Date().toISOString(), sendState: 'sending',
@@ -379,18 +425,20 @@ export default function ChatPage({ token, user, initialConversationId,
     }
     setMessages(current => mergeMessages(current, [optimistic]))
     try {
-      const saved = await sendMessage(connection, {
+      const saved = await sendTextMessage({
         conversationId: selectedId, clientMessageId, content,
       })
-      setMessages(current => mergeMessages(current, [{ ...saved, sendState: 'sent' }]))
+      if (selectedIdRef.current === sendingConversationId)
+        setMessages(current => mergeMessages(current, [{ ...saved, sendState: 'sent' }]))
       changeItems(current => upsertConversationMessage(current, saved, conversation, {
-        currentUserId: user.id, isActive: true,
+        currentUserId: user.id, isActive: selectedIdRef.current === sendingConversationId && threadVisible(),
       }))
       return saved
     } catch (failure) {
-      setMessages(current => current.map(message =>
-        messageKey(message) === messageKey(optimistic) && String(message.id).startsWith('local:')
-          ? { ...message, sendState: 'failed', error: failure.message } : message))
+      if (selectedIdRef.current === sendingConversationId)
+        setMessages(current => current.map(message =>
+          messageKey(message) === messageKey(optimistic) && !message.deliveredAt
+            ? { ...message, sendState: 'failed', error: failure.message } : message))
       throw failure
     }
   }
@@ -406,7 +454,11 @@ export default function ChatPage({ token, user, initialConversationId,
         messages={messages} currentUserId={user.id} historyLoading={historyLoading}
         historyError={historyError} hasOlder={Boolean(nextHistoryCursor)}
         connectionState={connectionState} connectionError={connectionError}
-        peerTyping={peerTyping} onTypingChange={typingChanged} onBack={() => setShowList(true)}
+        textState={textStates[selectedId]}
+        peerTyping={peerTyping} onTypingChange={typingChanged} onBack={() => {
+          showListRef.current = true
+          setShowList(true)
+        }}
         onRetry={retryDetail} onRetryHistory={retryHistory} onLoadOlder={loadOlderMessages}
         onSend={submitMessage} onSendFile={file => files.offer(conversation.id, file)} onRetryMessage={message =>
           submitMessage(message.content, message.clientMessageId)}

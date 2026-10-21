@@ -10,6 +10,7 @@ namespace PBL4
 {
     public class Program
     {
+        // Doc cau hinh, dang ky service va tao pipeline HTTP/SignalR de chay backend.
         public static void Main(string[] args)
         {
             var builder = WebApplication.CreateBuilder(args);
@@ -17,7 +18,7 @@ namespace PBL4
             var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
                 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' was not found.");
 
-            // Add services to the container.
+            // Dang ky dependency: DbContext theo request, registry phien dung chung mot instance.
             builder.Services.AddCors(options =>
             {
                 options.AddPolicy("AllowReactApp",
@@ -34,6 +35,9 @@ namespace PBL4
             builder.Services.AddScoped<MessageService>();
             builder.Services.AddScoped<MessageReceiptService>();
             builder.Services.AddSingleton<FileTransferService>();
+            builder.Services.AddSingleton<TextPeerSessionService>();
+            // Worker don phien text dinh ky; khong phu thuoc viec client co gui lenh dong hay khong.
+            builder.Services.AddHostedService<TextPeerMonitor>();
             builder.Services.AddHostedService<FileTransferMonitor>();
             builder.Services.AddSingleton<PresenceService>();
             builder.Services.AddScoped<RealtimeSessionFilter>();
@@ -50,7 +54,7 @@ namespace PBL4
             builder.Services.AddHostedService<HeartbeatMonitor>();
             builder.Services.AddSingleton<TypingRateLimiter>();
             builder.Services.AddSingleton<IUserIdProvider, SubClaimUserIdProvider>();
-            // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+            // Dang ky mo ta API; chi mo endpoint tai lieu trong moi truong Development.
             builder.Services.AddOpenApi();
 
             var app = builder.Build();
@@ -62,7 +66,7 @@ namespace PBL4
                     extensions: new Dictionary<string, object?> { ["code"] = "SERVICE_UNAVAILABLE" })
                     .ExecuteAsync(context);
             }));
-            // Không cache token hoặc hồ sơ xác thực ở trình duyệt/proxy.
+            // Khong cache token hoac ho so xac thuc o trinh duyet/proxy.
             app.Use(async (context, next) =>
             {
                 if (context.Request.Path.StartsWithSegments("/api/v1"))
@@ -70,7 +74,7 @@ namespace PBL4
                 await next();
             });
 
-            // Configure the HTTP request pipeline.
+            // Thu tu middleware quyet dinh CORS, gioi han tan suat va xac thuc truoc khi vao Hub.
             if (app.Environment.IsDevelopment())
             {
                 app.MapOpenApi();

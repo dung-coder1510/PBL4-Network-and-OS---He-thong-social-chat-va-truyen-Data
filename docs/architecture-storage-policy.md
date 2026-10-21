@@ -1,6 +1,7 @@
 # Kiến trúc kết nối, lưu trữ và đồng bộ
 
-Ngày cập nhật: 30/09/2026. Trạng thái: **đặc tả cho các bước triển khai tiếp theo**.
+Ngày cập nhật: 21/10/2026. Trạng thái: **chính sách kiến trúc và hiện trạng web;
+desktop/LAN/sync là các bước triển khai tiếp theo**.
 Bước 0 chỉ thống nhất tài liệu; không thay đổi code, schema hay database `PBL4` đang có.
 
 ## 1. Quy tắc đã chốt
@@ -174,8 +175,8 @@ Chu kỳ và giới hạn batch sẽ chọn khi triển khai, chưa có worker c
 | Thành phần | Trách nhiệm |
 |---|---|
 | `ChatHub` cơ bản | Đã có gửi/nhận text, lưu SQL, chống trùng và phát tới hai tài khoản |
-| `SignalingHub` | Chưa có; sẽ trao đổi SDP/ICE ở bước 3 |
-| Registry endpoint | Theo dõi client kind/khả năng theo phiên, chọn đúng endpoint |
+| Signaling qua `ChatHub` | Đã trao đổi SDP/ICE cho file và text; không cần Hub riêng trong MVP web |
+| Registry endpoint | Đã ràng buộc hai tab cho phiên text/file; client kind/khả năng desktop còn phải bổ sung |
 | LAN discovery và signaling local | Tìm và xác thực peer; tạo phiên không qua Hub |
 | SQLite repository, local outbox | Lịch sử, receipt, ID mapping; tách dữ liệu theo tài khoản |
 | Bộ chọn đường truyền | LAN/WebRTC/server fallback; giữ nguyên chính sách lưu của tin |
@@ -190,7 +191,10 @@ chạy lại script tạo schema trên database `PBL4` hiện có.
 
 Code hiện đã có auth, REST conversation/lịch sử/danh bạ và chat web qua
 SignalR, gồm ACK/read, chống trùng/retry, unread, presence/typing và reconnect
-tải bù. WebRTC, desktop và đồng bộ còn là kế hoạch. Xem
+tải bù. WebRTC text/file trên web đã có; text commit SQL trước, giao P2P rồi
+fallback SignalR nếu thiếu ACK. Hai Chrome context localhost đã được thử;
+LAN vật lý/WAN/TURN cần nghiệm thu riêng. Desktop, gọi thoại và đồng bộ còn
+là kế hoạch. Xem [text P2P](text-p2p.md), [truyền file](file-transfers.md),
 [đặc tả SignalR](signalr-implementation-spec.md),
 [conversation đã triển khai](conversations.md) và
 [schema server có Admin](database-design-admin.md).

@@ -27,6 +27,8 @@ npm run build
 - Hồ sơ, cuộc trò chuyện và lịch sử tin nhắn dùng dữ liệu thật từ backend.
 - Có tìm người, tạo/mở lại cuộc trò chuyện, tìm kiếm và phân trang danh sách.
 - Chat web gửi/nhận realtime qua `ChatHub`; tin được lưu SQL Server và tải lại bằng REST.
+- Text ưu tiên WebRTC DataChannel khi phiên hai tab ready; lưu SQL trước, fallback SignalR
+  với cùng UUID khi thiếu ACK. Hiển thị đường trực tiếp/TURN theo candidate pair thực tế.
 - Có trạng thái kết nối/gửi/nhận/đọc, gửi lại cùng `ClientMessageId`, unread và phân trang lịch sử.
 - Presence, typing, reconnect tải bù và danh bạ một chiều đã nối dữ liệu thật.
 - Truyền file WebRTC đã hoạt động: lời mời/chấp nhận, chunk 16 KiB, tiến độ, SHA-256,
@@ -36,3 +38,4 @@ npm run build
 Xem [hướng dẫn xác thực](../docs/authentication.md) để chạy backend, cấu hình database có sẵn và kiểm thử.
 Xem [hướng dẫn cuộc trò chuyện](../docs/conversations.md) để sử dụng và kiểm thử API cuộc trò chuyện.
 Xem [hướng dẫn truyền file](../docs/file-transfers.md) để dùng chức năng Tệp và cấu hình STUN/TURN.
+Xem [hướng dẫn chat text P2P](../docs/text-p2p.md) để hiểu phiên, receipt và kiểm thử.

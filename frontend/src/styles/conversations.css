@@ -50,3 +50,4 @@
   .conversation-thread-body { padding: 20px 16px; }
   .conversation-composer-note { padding: 16px; }
 }
+.text-route { margin: 3px 0 0; font-size: 12px; color: var(--text-muted, #64748b); }
