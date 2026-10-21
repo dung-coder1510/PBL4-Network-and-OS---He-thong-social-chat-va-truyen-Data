@@ -1,0 +1,25 @@
+[Unit]
+Description=PBL4 ASP.NET Core backend
+After=network.target mssql-server.service
+Wants=mssql-server.service
+
+[Service]
+Type=simple
+User=pbl4
+Group=pbl4
+WorkingDirectory=/opt/pbl4/current/backend
+ExecStart=/usr/bin/dotnet /opt/pbl4/current/backend/PBL4.dll
+EnvironmentFile=/etc/pbl4/pbl4.env
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGINT
+SyslogIdentifier=pbl4
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
