@@ -8,6 +8,7 @@ import {
   markAsRead, sendMessage, setTyping as sendTypingState,
 } from '../services/chatConnection.js'
 import { useChatRealtime } from '../realtime/chatRealtimeContext.js'
+import { useFileTransfers } from '../realtime/fileTransferContext.js'
 import {
   applyMessageStatus, applyPresence, createClientMessageId, upsertConversationMessage,
 } from '../utils/chatState.js'
@@ -32,6 +33,7 @@ function mergeMessages(current, additions) {
 export default function ChatPage({ token, user, initialConversationId,
   onInitialConversationHandled, onSessionExpired }) {
   const { connection, connectionState, connectionError, reconnect, subscribeSync } = useChatRealtime()
+  const files = useFileTransfers()
   const [items, setItems] = useState([])
   const itemsRef = useRef([])
   const [query, setQuery] = useState('')
@@ -406,7 +408,7 @@ export default function ChatPage({ token, user, initialConversationId,
         connectionState={connectionState} connectionError={connectionError}
         peerTyping={peerTyping} onTypingChange={typingChanged} onBack={() => setShowList(true)}
         onRetry={retryDetail} onRetryHistory={retryHistory} onLoadOlder={loadOlderMessages}
-        onSend={submitMessage} onRetryMessage={message =>
+        onSend={submitMessage} onSendFile={file => files.offer(conversation.id, file)} onRetryMessage={message =>
           submitMessage(message.content, message.clientMessageId)}
         onReconnect={reconnect} onCreate={() => setShowCreate(true)} />
       {showCreate && <NewConversationDialog token={token} onClose={() => setShowCreate(false)}

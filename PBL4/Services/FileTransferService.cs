@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -67,13 +67,9 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
                 throw new HubException("Tối đa 2 phiên truyền đang chờ hoặc đang chạy mỗi tài khoản.");
             var transfer = new FileTransfer
             {
-                ConversationId = conversationId,
-                ClientTransferId = request.ClientTransferId,
-                SenderId = userId,
-                FileName = request.FileName,
-                FileSizeBytes = request.FileSizeBytes,
-                Sha256 = hash,
-                CreatedAt = DateTime.UtcNow
+                ConversationId = conversationId, ClientTransferId = request.ClientTransferId,
+                SenderId = userId, FileName = request.FileName, FileSizeBytes = request.FileSizeBytes,
+                Sha256 = hash, CreatedAt = DateTime.UtcNow
             };
             db.FileTransfers.Add(transfer);
             await db.SaveChangesAsync();

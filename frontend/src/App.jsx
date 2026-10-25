@@ -7,6 +7,8 @@ import ChatPage from './pages/ChatPage.jsx'
 import ContactsPage from './pages/ContactsPage.jsx'
 import { authApi } from './services/authApi.js'
 import { ChatRealtimeProvider } from './realtime/ChatRealtimeProvider.jsx'
+import { FileTransferProvider } from './realtime/FileTransferProvider.jsx'
+import FilesPage from './pages/FilesPage.jsx'
 import './styles/app.css'
 
 const PAGES = new Set(['chat', 'contacts', 'calls', 'files', 'admin', 'settings'])
@@ -110,6 +112,7 @@ function App() {
   return (
     <ChatRealtimeProvider key={session.sessionId} token={session.accessToken}
       user={session.user} onSessionExpired={sessionExpired}>
+      <FileTransferProvider token={session.accessToken} user={session.user}>
       <AppShell currentPage={visiblePage} onLogout={logout} onNavigate={navigate} user={session.user} loggingOut={loggingOut}>
         {logoutError && <p className="auth-workspace-error" role="alert">{logoutError}</p>}
         {visiblePage === 'settings'
@@ -126,8 +129,11 @@ function App() {
               initialConversationId={openConversationId}
               onInitialConversationHandled={() => setOpenConversationId(null)}
               onSessionExpired={sessionExpired} />
+          : visiblePage === 'files'
+          ? <FilesPage token={session.accessToken} user={session.user} onSessionExpired={sessionExpired} />
           : <EmptyWorkspacePage page={visiblePage} user={session.user} />}
       </AppShell>
+      </FileTransferProvider>
     </ChatRealtimeProvider>
   )
 }

@@ -29,7 +29,10 @@ npm run build
 - Chat web gửi/nhận realtime qua `ChatHub`; tin được lưu SQL Server và tải lại bằng REST.
 - Có trạng thái kết nối/gửi/nhận/đọc, gửi lại cùng `ClientMessageId`, unread và phân trang lịch sử.
 - Presence, typing, reconnect tải bù và danh bạ một chiều đã nối dữ liệu thật.
-- Chưa có WebRTC; cuộc gọi và truyền tệp chưa nối API.
+- Truyền file WebRTC đã hoạt động: lời mời/chấp nhận, chunk 16 KiB, tiến độ, SHA-256,
+  hủy/từ chối và lịch sử metadata SQL. Tối đa 100 MiB/file; file không lưu trên server.
+- Cuộc gọi chưa nối API.
 
 Xem [hướng dẫn xác thực](../docs/authentication.md) để chạy backend, cấu hình database có sẵn và kiểm thử.
 Xem [hướng dẫn cuộc trò chuyện](../docs/conversations.md) để sử dụng và kiểm thử API cuộc trò chuyện.
+Xem [hướng dẫn truyền file](../docs/file-transfers.md) để dùng chức năng Tệp và cấu hình STUN/TURN.

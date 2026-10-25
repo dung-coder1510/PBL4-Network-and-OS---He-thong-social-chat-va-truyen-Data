@@ -33,10 +33,8 @@ namespace PBL4
             builder.Services.AddSignalR(options => options.AddFilter<RealtimeSessionFilter>());
             builder.Services.AddScoped<MessageService>();
             builder.Services.AddScoped<MessageReceiptService>();
-
             builder.Services.AddSingleton<FileTransferService>();
             builder.Services.AddHostedService<FileTransferMonitor>();
-
             builder.Services.AddSingleton<PresenceService>();
             builder.Services.AddScoped<RealtimeSessionFilter>();
             builder.Services.AddSingleton<PresenceTracker>();

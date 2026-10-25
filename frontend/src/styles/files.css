@@ -1,0 +1,10 @@
+.file-send { display: flex; flex-wrap: wrap; gap: 16px; align-items: end; margin-bottom: 16px; }
+.file-send label, .file-field { display: grid; gap: 8px; min-width: 200px; }
+.file-send select, .file-send input { padding: 10px; border: 1px solid var(--border, #ccc); border-radius: 8px; background: var(--surface, #fff); color: var(--text, #222); max-width: 100%; }
+.file-help { margin: 16px 0; line-height: 1.6; }
+.file-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.file-notice { position: fixed; z-index: 100; bottom: 24px; right: 24px; max-width: min(480px, 90vw); padding: 16px; border-radius: 12px; background: #183d3d; color: #fff; display: flex; gap: 16px; box-shadow: 0 4px 20px #0003; }
+.file-notice a { color: inherit; }
+.file-notice button { background: transparent; color: inherit; border: 0; cursor: pointer; font-size: 24px; }
+.file-actions small, td small { display: block; }
+td progress { display: block; max-width: 100%; margin-top: 8px; }

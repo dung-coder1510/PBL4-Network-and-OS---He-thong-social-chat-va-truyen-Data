@@ -93,8 +93,9 @@ thật từ DB ở chế độ chỉ đọc. User thường không có mục Qu�
 
 Sau đăng nhập, trang chat dùng [module cuộc trò chuyện](conversations.md):
 tìm người, tạo/mở cuộc trò chuyện, gửi/nhận SignalR và tải lịch sử từ DB.
-Danh bạ/cuộc gọi/tệp chưa nối API. WebRTC, cập nhật hồ sơ và upload avatar
-chưa được triển khai.
+Danh bạ đã nối API. [Truyền file WebRTC](file-transfers.md) đã có lời mời,
+chấp nhận, kiểm tra SHA-256 và lịch sử metadata. Cuộc gọi, cập nhật hồ sơ
+và upload avatar chưa được triển khai.
 
 ## Kiểm thử
 
