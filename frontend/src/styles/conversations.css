@@ -1,5 +1,9 @@
 .chat-layout.live-chat { min-width: 0; min-height: 0; grid-template-columns: minmax(230px, var(--conv-w)) minmax(0, 1fr); }
 .live-chat .conv-list, .live-chat .conv-items { min-width: 0; }
+.live-chat .conv-item { padding: 8px 10px; border-radius: 6px; }
+.live-chat .conv-item + .conv-item { margin-top: 4px; }
+.live-chat .conv-body { line-height: 1.4; }
+.live-chat .conv-preview { margin-top: 1px; }
 .live-chat .conv-preview, .conversation-username { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-username { font-size: 11px; color: var(--text-2); }
 .conversation-feedback { padding: 20px 12px; color: var(--text-2); font-size: 13px; overflow-wrap: anywhere; }
@@ -12,6 +16,18 @@
 .conversation-welcome p { color: var(--text-2); font-size: 13px; }
 .conversation-welcome .avatar { flex-shrink: 0; }
 .conversation-welcome--messages { margin: auto; }
+.live-chat .thread-header { height: auto; min-height: var(--topbar-h); padding-block: 12px; }
+.thread-meta { display: flex; align-items: center; gap: 6px 0; min-width: 0; margin-top: 6px; }
+.thread-identity { display: flex; align-items: center; min-width: 0; }
+.thread-identity .chat-connection-state { min-width: 0; }
+.stranger-label + .chat-connection-state { margin-left: 10px; padding-left: 10px; border-left: 1px solid var(--border); }
+.stranger-label { flex-shrink: 0; padding: 1px 5px; border-radius: 3px; background: #73777d; color: #fff; font-size: 10px; font-weight: 700; line-height: 18px; white-space: nowrap; }
+.thread-meta .text-route { min-width: 0; margin: 0 0 0 10px; padding-left: 10px; border-left: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-2); }
+.stranger-contact { flex-shrink: 0; padding: 10px 20px; border-top: 6px solid var(--surface-2); border-bottom: 1px solid var(--border); background: var(--surface); color: var(--text-2); }
+.stranger-contact-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.stranger-contact-row > p { min-width: 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.stranger-contact-button { min-height: 32px; padding: 6px 14px; border-radius: 4px; background: var(--surface-2); color: var(--text); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.stranger-contact-button:hover:not(:disabled) { background: var(--border); }
 .conversation-older { margin: 0 auto 12px; flex-shrink: 0; }
 .chat-connection-state { overflow: hidden; color: var(--text-2); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .chat-connection-state.connected { color: var(--green); }
@@ -31,6 +47,13 @@
 .contact-alias-editor .btn { padding: 6px 10px; }
 .new-conversation-dialog { margin: auto; width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg); }
 .new-conversation-dialog::backdrop { background: rgb(15 23 42 / 45%); }
+.contact-dialog-person { display: flex; align-items: center; gap: 12px; margin: 20px 0; }
+.contact-dialog-person > div { min-width: 0; overflow-wrap: anywhere; }
+.contact-dialog-person > div > strong, .contact-dialog-person > div > span { display: block; }
+.contact-dialog-person > div > strong { font-size: 14px; }
+.contact-dialog-person > div > span { margin-top: 2px; color: var(--text-2); font-size: 12px; }
+.contact-alias-field { display: grid; gap: 6px; }
+.contact-alias-field > span { font-size: 12px; font-weight: 600; }
 .new-conversation-heading { display: flex; gap: 12px; justify-content: space-between; align-items: center; }
 .new-conversation-heading h2 { font-size: 18px; }
 .new-conversation-dialog form > p { margin: 12px 0 16px; font-size: 13px; color: var(--text-2); }
@@ -49,5 +72,13 @@
   .live-chat .thread-header { padding: 12px; height: auto; min-height: 60px; gap: 8px; }
   .conversation-thread-body { padding: 20px 16px; }
   .conversation-composer-note { padding: 16px; }
+  .stranger-contact { padding: 10px 12px; }
+  .stranger-contact-row { gap: 8px; }
+  .thread-meta { flex-wrap: wrap; }
+  .thread-identity { flex-basis: 100%; }
+  .thread-meta .text-route { flex-basis: 100%; margin-left: 0; padding-left: 0; border-left: 0; }
+}
+@media (max-width: 420px) {
+  .stranger-contact-button { max-width: 112px; padding: 7px 10px; line-height: 1.4; }
 }
 .text-route { margin: 3px 0 0; font-size: 12px; color: var(--text-muted, #64748b); }

@@ -2,9 +2,9 @@ import { request } from './apiClient.js'
 
 export const conversationsApi = {
   searchUsers: (token, search, signal) => request('/users?' + new URLSearchParams({ search }), { token, signal }),
-  list: (token, { search = '', beforeId } = {}, signal) => {
+  list: (token, { search = '', cursor } = {}, signal) => {
     const query = new URLSearchParams({ search, limit: '30' })
-    if (beforeId) query.set('beforeId', beforeId)
+    if (cursor) query.set('cursor', cursor)
     return request('/conversations?' + query, { token, signal })
   },
   get: (token, id, signal) => request('/conversations/' + encodeURIComponent(id), { token, signal }),

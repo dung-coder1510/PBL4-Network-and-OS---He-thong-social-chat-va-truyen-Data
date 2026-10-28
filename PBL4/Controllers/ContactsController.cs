@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.SignalR;
 using PBL4.Contracts;
 using PBL4.Data;
 using PBL4.Models;
@@ -13,7 +14,8 @@ namespace PBL4.Controllers;
 
 [ApiController, Authorize]
 [Route("api/v1/contacts")]
-public sealed class ContactsController(AppDbContext db, PresenceTracker presence) : ControllerBase
+public sealed class ContactsController(AppDbContext db, PresenceTracker presence,
+    IHubContext<ChatHub, IChatClient> chatHub) : ControllerBase
 {
     private int CurrentUserId => int.Parse(User.FindFirstValue("sub")!, CultureInfo.InvariantCulture);
 
@@ -60,6 +62,7 @@ public sealed class ContactsController(AppDbContext db, PresenceTracker presence
             return Ok(WithPresence(winner));
         }
         var result = await Find(userId, request.ContactUserId, ct) ?? throw new InvalidOperationException();
+        await NotifyConversationChanged(userId, request.ContactUserId, ct);
         return CreatedAtAction(nameof(List), WithPresence(result));
     }
 
@@ -81,10 +84,26 @@ public sealed class ContactsController(AppDbContext db, PresenceTracker presence
     [HttpDelete("{contactUserId:int}")]
     public async Task<IActionResult> Delete(int contactUserId, CancellationToken ct)
     {
+        var userId = CurrentUserId;
         var deleted = await db.Contacts.Where(c =>
-            c.UserId == CurrentUserId && c.ContactUserId == contactUserId)
+            c.UserId == userId && c.ContactUserId == contactUserId)
             .ExecuteDeleteAsync(ct);
+        if (deleted > 0) await NotifyConversationChanged(userId, contactUserId, ct);
         return deleted == 0 ? MissingContact() : NoContent();
+    }
+
+    // Lam moi nhan Nguoi la o cac tab cua chu danh ba; khong tiet lo thay doi cho peer.
+    private async Task NotifyConversationChanged(int userId, int contactUserId, CancellationToken ct)
+    {
+        var connectionIds = presence.GetValidConnectionIds([userId]);
+        if (connectionIds.Count == 0) return;
+        var conversationId = await db.DirectConversations.AsNoTracking()
+            .Where(c => (c.UserAID == userId && c.UserBID == contactUserId) ||
+                (c.UserBID == userId && c.UserAID == contactUserId))
+            .Select(c => c.Id).SingleOrDefaultAsync(ct);
+        if (conversationId > 0)
+            await chatHub.Clients.Clients(connectionIds).ConversationChanged(
+                new ConversationSubscriptionDto(conversationId.ToString(CultureInfo.InvariantCulture)));
     }
 
     private async Task<ContactDto?> Find(int userId, int contactUserId, CancellationToken ct) =>

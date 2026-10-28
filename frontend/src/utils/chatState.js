@@ -42,13 +42,27 @@ export function mergeChatMessages(current, additions) {
   })
 }
 
-// Xac dinh tin nao moi hon de cap nhat preview; so ID SQL truoc, timestamp la phuong an du phong.
+// Chon preview theo timestamp chuan, dung ID SQL de pha hoa khi hai tin trung mili giay.
 function isNewerMessage(message, previous) {
   if (!previous) return true
+  const difference = Date.parse(message.createdAt) - Date.parse(previous.createdAt)
+  if (difference) return difference > 0
   const nextId = persistedId(message.id)
   const previousId = persistedId(previous.id)
   if (nextId !== null && previousId !== null) return nextId > previousId
   return Date.parse(message.createdAt) > Date.parse(previous.createdAt)
+}
+
+// Dung timestamp tin cuoi o ca REST va realtime; ID conversation chi dung khi trung timestamp.
+export function sortConversations(items) {
+  return [...items].sort((a, b) => {
+    const difference = Date.parse(b.lastMessage?.createdAt || b.createdAt) -
+      Date.parse(a.lastMessage?.createdAt || a.createdAt)
+    if (difference) return difference
+    const aId = persistedId(a.id)
+    const bId = persistedId(b.id)
+    return aId !== null && bId !== null ? (aId > bId ? -1 : aId < bId ? 1 : 0) : 0
+  })
 }
 
 // Them/cap nhat conversation tu mot tin, doi preview, sap lai danh sach va tinh so chua doc.
@@ -82,8 +96,8 @@ export function upsertConversationMessage(items, message, conversation = null,
       : seen.length >= 256 ? (newer ? message.id : base.lastMessage?.id) : baseline,
   }
   const others = items.filter(item => item.id !== message.conversationId)
-  if (!current) return [updated, ...others]
-  return newer ? [updated, ...others] : items.map(item => item.id === updated.id ? updated : item)
+  if (!current) return sortConversations([updated, ...others])
+  return sortConversations(items.map(item => item.id === updated.id ? updated : item))
 }
 
 // Ap dung receipt exact khi co MessageId; client cu van co the gui receipt cong don theo moc ID.

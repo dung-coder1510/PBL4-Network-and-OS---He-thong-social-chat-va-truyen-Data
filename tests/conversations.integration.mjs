@@ -16,7 +16,10 @@ const tokens = []
 let ownNames = false
 let passed = 0
 function sql(query) {
-  return execFileSync('sqlcmd', ['-S', server, '-d', database, '-E', '-C', '-b', '-l', '5', '-h', '-1', '-W', '-Q', 'SET NOCOUNT ON; ' + query], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  return execFileSync('sqlcmd', ['-S', server, '-d', database, '-E', '-C', '-b', '-l', '5', '-h', '-1', '-W', '-Q',
+    'SET NOCOUNT ON; SET ANSI_NULLS ON; SET QUOTED_IDENTIFIER ON; SET ANSI_PADDING ON; ' +
+    'SET ANSI_WARNINGS ON; SET CONCAT_NULL_YIELDS_NULL ON; SET ARITHABORT ON; SET NUMERIC_ROUNDABORT OFF; ' + query],
+  { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 }
 async function api(path, { token, method = 'GET', body } = {}) {
   const response = await fetch(base + path, { method,
@@ -95,6 +98,24 @@ try {
   check('Detail identifies the other participant for each side', () => {
     assert.equal(bothDetails[0].data.peer.id, users[1].id); assert.equal(bothDetails[1].data.peer.id, users[0].id)
   })
+  check('Users outside own contacts are strangers on both sides', () => {
+    assert.equal(bothDetails[0].data.isContact, false)
+    assert.equal(bothDetails[1].data.isContact, false)
+    assert.ok(concurrent.every(result => result.data.isContact === false))
+  })
+  const addedContact = await api('/contacts', { token: tokens[0], method: 'POST',
+    body: { contactUserId: users[1].id } })
+  assert.equal(addedContact.status, 201)
+  const afterAdd = await Promise.all([details(0, ab), details(1, ab), list(0), create(0, users[1].id)])
+  check('Own contact removes stranger status without changing the reverse direction', () => {
+    assert.equal(afterAdd[0].data.isContact, true)
+    assert.equal(afterAdd[1].data.isContact, false)
+    assert.equal(afterAdd[2].data.items.find(item => item.id === ab).isContact, true)
+    assert.equal(afterAdd[3].data.isContact, true)
+  })
+  assert.equal((await api('/contacts/' + users[1].id, { token: tokens[0], method: 'DELETE' })).status, 204)
+  const afterDelete = await details(0, ab)
+  check('Removing own contact restores stranger status', () => assert.equal(afterDelete.data.isContact, false))
   const outsider = await details(2, ab)
   const outsiderList = await list(2)
   const nonexistent = await details(2, '9223372036854775807')
@@ -109,7 +130,7 @@ try {
   const ac = await create(0, users[2].id)
   assert.equal(ac.status, 201)
   const page1 = await list(0, '?limit=1')
-  const page2 = await list(0, '?limit=1&beforeId=' + page1.data.nextCursor)
+  const page2 = await list(0, '?limit=1&cursor=' + encodeURIComponent(page1.data.nextCursor))
   check('Cursor pagination is ordered and has no duplicate', () => {
     assert.equal(page1.data.items[0].id, ac.data.id)
     assert.equal(page2.data.items[0].id, ab)
@@ -127,11 +148,39 @@ try {
   const persisted = await list(0)
   check('Conversation survives logout and login', () => assert.ok(persisted.data.items.some(c => c.id === ab)))
   check('Creating a conversation does not insert messages', () => assert.equal(sql("SELECT COUNT(*) FROM dbo.Messages WHERE ConversationId IN (SELECT Id FROM dbo.DirectConversations WHERE UserAID IN (" + users.map(u => u.id).join(',') + ') AND UserBID IN (' + users.map(u => u.id).join(',') + '))'), '0'))
+
+  // Chen tin chi trong conversation cua luot chay, dao thu tu thoi gian so voi ID tao conversation.
+  sql(`INSERT dbo.Messages (ClientMessageId, ConversationId, SenderId, Content, CreatedAt)
+    VALUES (NEWID(), ${ab}, ${users[0].id}, N'newest message in older conversation', DATEADD(SECOND, 2, SYSUTCDATETIME()));
+    INSERT dbo.Messages (ClientMessageId, ConversationId, SenderId, Content, CreatedAt)
+    VALUES (NEWID(), ${ac.data.id}, ${users[2].id}, N'older message inserted later', SYSUTCDATETIME());`)
+  const recent = await list(0)
+  check('Latest message time takes priority over conversation ID and message insert order', () => {
+    assert.deepEqual(recent.data.items.map(item => item.id), [ab, ac.data.id])
+    assert.equal(recent.data.items[0].lastMessage.content, 'newest message in older conversation')
+  })
+  const activityPage1 = await list(0, '?limit=1')
+  const activityPage2 = await list(0, '?limit=1&cursor=' + encodeURIComponent(activityPage1.data.nextCursor))
+  check('Activity cursor retrieves older activity even when it has a larger conversation ID', () => {
+    assert.equal(activityPage1.data.items[0].id, ab)
+    assert.equal(activityPage2.data.items[0].id, ac.data.id)
+    assert.equal(activityPage2.data.nextCursor, null)
+  })
+  sql(`UPDATE dbo.Messages SET CreatedAt='2099-01-01T00:00:00.000' WHERE ConversationId IN (${ab}, ${ac.data.id});`)
+  const tiedPage1 = await list(0, '?limit=1')
+  const tiedPage2 = await list(0, '?limit=1&cursor=' + encodeURIComponent(tiedPage1.data.nextCursor))
+  check('Equal activity timestamps use conversation ID as a stable pagination tie breaker', () => {
+    assert.equal(tiedPage1.data.items[0].id, ac.data.id)
+    assert.equal(tiedPage2.data.items[0].id, ab)
+  })
+  for (const cursor of ['broken', '9999999999999999999:1', '1:0', '-1:1'])
+    assert.equal((await list(0, '?cursor=' + encodeURIComponent(cursor))).status, 400)
+  check('Malformed activity cursors are rejected', () => {})
   console.log(passed + ' checks passed.')
 } finally {
   if (ownNames) {
     const subquery = "SELECT Id FROM dbo.Users WHERE Username IN ('" + names.join("','") + "')"
-    sql('DELETE FROM dbo.DirectConversations WHERE UserAID IN (' + subquery + ') AND UserBID IN (' + subquery + "); DELETE FROM dbo.Users WHERE Username IN ('" + names.join("','") + "')")
+    sql('DELETE FROM dbo.Messages WHERE ConversationId IN (SELECT Id FROM dbo.DirectConversations WHERE UserAID IN (' + subquery + ') AND UserBID IN (' + subquery + ')); DELETE FROM dbo.DirectConversations WHERE UserAID IN (' + subquery + ') AND UserBID IN (' + subquery + "); DELETE FROM dbo.Users WHERE Username IN ('" + names.join("','") + "')")
     console.log('Removed only accounts and conversations created by this run.')
   }
 }

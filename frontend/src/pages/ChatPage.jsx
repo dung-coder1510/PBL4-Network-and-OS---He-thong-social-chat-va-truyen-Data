@@ -3,6 +3,7 @@ import ConversationList from '../components/chat/ConversationList.jsx'
 import ConversationThread from '../components/chat/ConversationThread.jsx'
 import NewConversationDialog from '../components/chat/NewConversationDialog.jsx'
 import { conversationsApi } from '../services/conversationsApi.js'
+import AddContactDialog from '../components/contacts/AddContactDialog.jsx'
 import {
   listenForMessageStatuses, listenForPresence, listenForTyping,
   setTyping as sendTypingState,
@@ -10,7 +11,7 @@ import {
 import { useChatRealtime } from '../realtime/chatRealtimeContext.js'
 import { useFileTransfers } from '../realtime/fileTransferContext.js'
 import {
-  applyMessageStatus, applyPresence, createClientMessageId, mergeChatMessages, upsertConversationMessage,
+  applyMessageStatus, applyPresence, createClientMessageId, mergeChatMessages, sortConversations, upsertConversationMessage,
 } from '../utils/chatState.js'
 import '../styles/conversations.css'
 
@@ -58,6 +59,7 @@ export default function ChatPage({ token, user, initialConversationId,
   const [peerTyping, setPeerTyping] = useState(false)
   const [visibilityRevision, setVisibilityRevision] = useState(0)
   const [showCreate, setShowCreate] = useState(false)
+  const [contactToAdd, setContactToAdd] = useState(null)
   const [showList, setShowList] = useState(true)
   const showListRef = useRef(true)
 
@@ -69,7 +71,7 @@ export default function ChatPage({ token, user, initialConversationId,
   // Cap nhat state va ref danh sach cung luc, de listener bat dong bo doc du lieu moi nhat.
   function changeItems(updater) {
     setItems(current => {
-      const next = updater(current)
+      const next = sortConversations(updater(current))
       itemsRef.current = next
       return next
     })
@@ -94,7 +96,7 @@ export default function ChatPage({ token, user, initialConversationId,
     const timer = setTimeout(async () => {
       try {
         const page = await conversationsApi.list(token, {
-          search: query.trim(), beforeId: cursor,
+          search: query.trim(), cursor,
         }, controller.signal)
         if (!controller.signal.aborted) {
           changeItems(current => cursor
@@ -409,6 +411,15 @@ export default function ChatPage({ token, user, initialConversationId,
     setHistoryBefore(nextHistoryCursor)
   }
 
+  // Chi an nhan Nguoi la sau khi popup luu thanh cong; cap nhat theo peer de khong nham thread.
+  function contactAdded(contact) {
+    setConversation(current => current?.peer.id === contact.user.id
+      ? { ...current, isContact: true } : current)
+    changeItems(current => current.map(item => item.peer.id === contact.user.id
+      ? { ...item, isContact: true } : item))
+    setContactToAdd(null)
+  }
+
   // Hien tin optimistic ngay, gui qua manager va thay bang tin SQL chuan khi co ket qua.
   // Retry giu UUID cu; luu conversation luc bat dau de response muon khong chen vao thread da doi.
   async function submitMessage(content, existingClientMessageId) {
@@ -462,9 +473,13 @@ export default function ChatPage({ token, user, initialConversationId,
         onRetry={retryDetail} onRetryHistory={retryHistory} onLoadOlder={loadOlderMessages}
         onSend={submitMessage} onSendFile={file => files.offer(conversation.id, file)} onRetryMessage={message =>
           submitMessage(message.content, message.clientMessageId)}
-        onReconnect={reconnect} onCreate={() => setShowCreate(true)} />
+        onReconnect={reconnect} onCreate={() => setShowCreate(true)}
+        onAddContact={() => setContactToAdd(conversation)} />
       {showCreate && <NewConversationDialog token={token} onClose={() => setShowCreate(false)}
         onCreated={created} onSessionExpired={onSessionExpired} />}
+      {contactToAdd && <AddContactDialog token={token} person={contactToAdd.peer}
+        onClose={() => setContactToAdd(null)} onAdded={contactAdded}
+        onSessionExpired={onSessionExpired} />}
     </div>
   )
 }

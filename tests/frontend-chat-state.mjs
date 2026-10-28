@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createClientMessageId, upsertConversationMessage } from '../frontend/src/utils/chatState.js'
+import { createClientMessageId, sortConversations, upsertConversationMessage } from '../frontend/src/utils/chatState.js'
 
 const preferred = createClientMessageId({ randomUUID: () => 'native-uuid' })
 assert.equal(preferred, 'native-uuid')
@@ -27,3 +27,19 @@ assert.deepEqual(updated.map(item => item.id), ['12', '13'])
 assert.equal(updated[0].lastMessage.content, 'Mới nhất')
 assert.equal(updated[0].unreadCount, 1)
 console.log('PASS UUID fallback and realtime conversation upsert.')
+
+const oldConversation = { ...conversation, id: '1', lastMessage: { ...firstMessage, createdAt: '2026-10-27T12:00:00Z' } }
+const newConversation = { ...conversation, id: '9007199254740993', lastMessage: { ...firstMessage, createdAt: '2026-10-20T12:00:00Z' } }
+const emptyConversation = { ...conversation, id: '3', createdAt: '2026-10-24T12:00:00Z' }
+assert.deepEqual(sortConversations([newConversation, emptyConversation, oldConversation]).map(item => item.id),
+  ['1', '3', '9007199254740993'])
+const sameTime = [oldConversation, { ...oldConversation, id: '9007199254740993' }, { ...oldConversation, id: '9007199254740992' }]
+assert.deepEqual(sortConversations(sameTime).map(item => item.id), ['9007199254740993', '9007199254740992', '1'])
+const lateConversation = { ...conversation, id: '2', lastMessage: { ...firstMessage, id: '3', createdAt: '2026-10-25T12:00:00Z' } }
+const lateMessage = { ...firstMessage, id: '4', conversationId: '2', createdAt: '2026-10-26T12:00:00Z' }
+assert.deepEqual(upsertConversationMessage([oldConversation, lateConversation], lateMessage).map(item => item.id), ['1', '2'])
+const newest = { ...lateMessage, id: '5', createdAt: '2026-10-28T12:00:00Z' }
+assert.deepEqual(upsertConversationMessage([oldConversation, lateConversation], newest).map(item => item.id), ['2', '1'])
+assert.deepEqual(upsertConversationMessage([oldConversation], lateMessage, lateConversation).map(item => item.id), ['1', '2'])
+assert.equal(upsertConversationMessage([{ ...lateConversation, lastMessage: newest }], lateMessage)[0].lastMessage.id, '5')
+console.log('PASS last-activity ordering, empty conversations, exact BIGINT ties and delayed messages.')
