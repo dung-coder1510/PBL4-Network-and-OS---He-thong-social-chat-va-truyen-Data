@@ -59,23 +59,25 @@ public sealed class PresenceService(IServiceScopeFactory scopes, PresenceTracker
     private async Task NotifyAsync(int userId, bool isOnline, DateTime? lastSeenAt,
         CancellationToken ct)
     {
-        await using var scope = scopes.CreateAsyncScope();
+        await using var scope = scopes.CreateAsyncScope(); //Tạo scpoe để tạo đối tượng db truy vấn (dùng using tự giải phóng sau khi kết thúc)
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        if (!isOnline)
+        if (!isOnline) //nếu offline thì ghi lần hoạt động cuối
             await db.Users.Where(user => user.Id == userId)
                 .ExecuteUpdateAsync(setters => setters.SetProperty(user => user.LastSeenAt, lastSeenAt), ct);
+
+        //nếu online thì tìm các người dùng có liên hệ với A theo 3 nhóm
         var peers = await db.DirectConversations.AsNoTracking()
             .Where(c => c.UserAID == userId || c.UserBID == userId)
-            .Select(c => c.UserAID == userId ? c.UserBID : c.UserAID)
+            .Select(c => c.UserAID == userId ? c.UserBID : c.UserAID) //nhóm 1: có cuộc hội thoại trực tiếp với A
             .Concat(db.Contacts.AsNoTracking().Where(c => c.UserId == userId)
-                .Select(c => c.ContactUserId))
+                .Select(c => c.ContactUserId)) //nhóm 2: có trong danh bạ của A
             .Concat(db.Contacts.AsNoTracking().Where(c => c.ContactUserId == userId)
-                .Select(c => c.UserId))
-            .Distinct().ToListAsync(ct);
+                .Select(c => c.UserId)) // Nhóm 3: có A trong danh bạ
+            .Distinct().ToListAsync(ct); //thực hiện loại bỏ ID trùng 
         peers.Add(userId);
         var connectionIds = tracker.GetValidConnectionIds(peers);
         if (connectionIds.Count == 0) return;
         await hub.Clients.Clients(connectionIds)
-            .PresenceChanged(new PresenceDto(userId, isOnline, lastSeenAt));
+            .PresenceChanged(new PresenceDto(userId, isOnline, lastSeenAt)); //phát thông báo cho các người dùng có liên quan ở trên
     }
 }
