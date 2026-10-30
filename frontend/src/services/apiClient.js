@@ -1,5 +1,7 @@
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
+const API_BASE = (import.meta.env?.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
 
+// Goi REST API co JWT, JSON va timeout 15 giay; tra JSON/undefined cho 204 hoac nem loi co status/code.
+// Ket hop AbortSignal cua caller voi timeout de huy request khi doi trang/logout hoac cho qua lau.
 export async function request(path, { method = 'GET', body, token, signal } = {}) {
   let response
   try {
@@ -17,6 +19,7 @@ export async function request(path, { method = 'GET', body, token, signal } = {}
     if (error.name === 'AbortError') throw error
     throw new Error('Không kết nối được máy chủ. Vui lòng thử lại.')
   }
+  // HTTP 204 khong co body; khong co doc JSON trong truong hop nay.
   if (response.status === 204) return undefined
   const data = await response.json().catch(() => null)
   if (!response.ok) {

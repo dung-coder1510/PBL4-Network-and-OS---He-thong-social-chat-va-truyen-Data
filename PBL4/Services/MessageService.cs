@@ -12,6 +12,8 @@ public sealed record SavedMessage(MessageDto Message, int PeerUserId);
 
 public sealed class MessageService(AppDbContext db)
 {
+    // Kiem tra thanh vien, chuan hoa text va luu tin vao SQL; tra tin chuan kem ID nguoi nhan.
+    // Dung chung cho SignalR va P2P; ham nay khong tu phat tin den client.
     public async Task<SavedMessage> SaveAsync(int senderId, SendMessageDto request,
         CancellationToken ct)
     {
@@ -42,6 +44,7 @@ public sealed class MessageService(AppDbContext db)
         if (conversation.PeerIsDisabled)
             throw new HubException("Tài khoản người nhận hiện không khả dụng.");
 
+        // Khoa (SenderId, ClientMessageId) giup retry va fallback cung tham chieu mot tin.
         var existing = await db.Messages.AsNoTracking()
             .SingleOrDefaultAsync(m => m.SenderId == senderId &&
                 m.ClientMessageId == request.ClientMessageId, ct);
@@ -64,6 +67,8 @@ public sealed class MessageService(AppDbContext db)
         }
         catch (DbUpdateException ex) when (ex.InnerException is SqlException { Number: 2601 or 2627 })
         {
+            // Hai request co the cung vuot qua buoc tra cuu; unique index chi cho mot ban ghi thang.
+            // Bo entity vua them va doc ban da luu, thay vi thu insert them lan nua.
             db.Entry(message).State = EntityState.Detached;
             existing = await db.Messages.AsNoTracking().SingleOrDefaultAsync(m =>
                 m.SenderId == senderId && m.ClientMessageId == request.ClientMessageId, ct);
@@ -76,6 +81,7 @@ public sealed class MessageService(AppDbContext db)
             conversation.UserAID == senderId ? conversation.UserBID : conversation.UserAID);
     }
 
+    // Tra ket qua cu khi retry dung payload; tu choi UUID bi tai su dung cho noi dung/nguoi khac.
     private static SavedMessage Existing(Message message, long conversationId,
         string content, int peerUserId)
     {
@@ -84,6 +90,7 @@ public sealed class MessageService(AppDbContext db)
         return new SavedMessage(ToDto(message), peerUserId);
     }
 
+    // Doi entity sang DTO: BIGINT thanh chuoi de JavaScript khong mat chinh xac, thoi gian gan UTC.
     public static MessageDto ToDto(Message message) => new(
         message.Id.ToString(CultureInfo.InvariantCulture), message.ClientMessageId,
         message.ConversationId.ToString(CultureInfo.InvariantCulture), message.SenderId,

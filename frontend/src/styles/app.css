@@ -1008,8 +1008,9 @@ p { margin: 0; }
   outline: none;
   background: transparent;
   resize: none;
-  height: 44px;
+  height: 1.6em;
   max-height: 120px;
+  padding: 0;
   font-size: 13px;
   line-height: 1.6;
   color: var(--text);
@@ -1032,13 +1033,6 @@ p { margin: 0; }
 }
 .send-btn:hover { background: var(--accent-hover); }
 .send-btn:active { transform: scale(.93); }
-.composer-hint {
-  text-align: center;
-  font-size: 10px;
-  color: var(--text-3);
-  margin-top: 8px;
-}
-
 /* ─── INFO PANEL ─────────────────────────────────────────────── */
 .info-panel {
   display: flex;

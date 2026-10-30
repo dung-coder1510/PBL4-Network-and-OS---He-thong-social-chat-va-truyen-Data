@@ -1,17 +1,22 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import Avatar from '../Avatar.jsx'
 import Icon from '../Icon.jsx'
+import { textRouteLabel } from '../../services/textProtocol.js'
 
+// Hien timestamp server theo gio dia phuong cua trinh duyet voi dinh dang gio/phut tieng Viet.
 function formatTime(value) {
   return new Date(value).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
 }
 
+// Ve thread, receipt, route va o soan tin; nhan callback xu ly nghiep vu tu ChatPage.
+// Ban nhap nam trong component; key conversation o cha giup reset khi doi nguoi nhan.
 export default function ConversationThread({ conversation, loading, error, messages,
   currentUserId, historyLoading, historyError, hasOlder, connectionState, connectionError,
   peerTyping, onTypingChange, onBack, onRetry, onRetryHistory, onLoadOlder, onSend,
-  onRetryMessage, onReconnect, onCreate, onSendFile }) {
+  onRetryMessage, onReconnect, onCreate, onSendFile, textState, onAddContact }) {
   const peer = conversation?.peer
   const messageList = useRef(null)
+  const draftInput = useRef(null)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
@@ -20,10 +25,35 @@ export default function ConversationThread({ conversation, loading, error, messa
   const [fileError, setFileError] = useState('')
   const [offeredFile, setOfferedFile] = useState('')
 
+  // Cuon toi cuoi khi doi conversation hoac so tin thay doi, truoc khi trinh duyet ve khung moi.
   useLayoutEffect(() => {
     if (messageList.current) messageList.current.scrollTop = messageList.current.scrollHeight
   }, [conversation?.id, messages.length])
 
+  // Do lai noi dung de o nhap tu gian khi go, dan chu va thu gon khi xoa hoac gui xong.
+  useLayoutEffect(() => {
+    const input = draftInput.current
+    if (!input) return
+    input.style.height = 'auto'
+    input.style.height = `${input.scrollHeight}px`
+  }, [draft, loading, error])
+
+  // Xuong dong cung thay doi khi doi kich thuoc khung chat, ke ca ban nhap khong doi.
+  useLayoutEffect(() => {
+    const input = draftInput.current
+    if (!input) return
+    let previousWidth = input.clientWidth
+    const observer = new ResizeObserver(() => {
+      if (input.clientWidth === previousWidth) return
+      previousWidth = input.clientWidth
+      input.style.height = 'auto'
+      input.style.height = `${input.scrollHeight}px`
+    })
+    observer.observe(input)
+    return () => observer.disconnect()
+  }, [loading, error])
+
+  // Chan submit rong/trung luc dang gui; chi xoa ban nhap sau khi callback gui thanh cong.
   async function submit(event) {
     event.preventDefault()
     const content = draft.trim()
@@ -41,6 +71,7 @@ export default function ConversationThread({ conversation, loading, error, messa
     }
   }
 
+  // Gui lai tin loi bang callback cua cha de tai su dung UUID, dong thoi hien loi neu tiep tuc that bai.
   async function retryMessage(message) {
     setSendError('')
     try {
@@ -50,6 +81,7 @@ export default function ConversationThread({ conversation, loading, error, messa
     }
   }
 
+  // Gui loi moi file cho dung nguoi dang chat, giu nguyen ban nhap va reset input de chon lai cung file.
   async function selectFile(event) {
     const file = event.target.files?.[0]
     event.target.value = ''
@@ -75,16 +107,35 @@ export default function ConversationThread({ conversation, loading, error, messa
       <header className="thread-header">
         <button className="icon-btn back-btn" type="button" onClick={onBack} aria-label="Về danh sách cuộc trò chuyện">←</button>
         {peer ? <><Avatar person={{ id: peer.id, name: peer.displayName, online: peer.isOnline }} />
-          <div className="thread-person"><h2 className="thread-name">{peer.displayName}</h2>
-            <p className={`chat-connection-state${peer.isOnline ? ' connected' : ''}`}>
-              @{peer.username} · {peerTyping ? 'Đang nhập…' : presenceLabel}
-            </p>
+          <div className="thread-person">
+            <h2 className="thread-name" title={`@${peer.username}`}>{peer.displayName}</h2>
+            <div className="thread-meta">
+              <div className="thread-identity">
+                {conversation.isContact === false && <span className="stranger-label">NGƯỜI LẠ</span>}
+                <p className={`chat-connection-state${peer.isOnline ? ' connected' : ''}`} title={presenceLabel}>
+                  {peerTyping ? 'Đang nhập…' : presenceLabel}
+                </p>
+              </div>
+              <p className="text-route" role="status" data-route={textState?.route || 'signalr'}>
+                {connectionState === 'connected' ? textRouteLabel(textState) : 'Đường truyền text đã ngắt'}
+              </p>
+            </div>
           </div></> : <h2 className="thread-name">Trò chuyện</h2>}
       </header>
 
       {loading ? <div className="conversation-thread-body"><p role="status">Đang mở cuộc trò chuyện…</p></div>
         : error ? <div className="conversation-thread-body"><div role="alert"><p>{error}</p><button className="btn" type="button" onClick={onRetry}>Thử lại</button></div></div>
         : peer ? <>
+          {conversation.isContact === false && <aside className="stranger-contact" aria-label="Thêm liên hệ vào danh bạ">
+            <div className="stranger-contact-row">
+              <Icon name="user-plus" />
+              <p>Thêm vào danh bạ của bạn</p>
+              <button className="stranger-contact-button" type="button" onClick={onAddContact}
+                disabled={peer.isDisabled}>
+                Thêm liên hệ
+              </button>
+            </div>
+          </aside>}
           <div className="messages" ref={messageList} role="log" aria-live="polite" aria-busy={historyLoading}>
             {hasOlder && <button className="btn conversation-older" type="button" onClick={onLoadOlder} disabled={historyLoading}>Xem tin nhắn cũ hơn</button>}
             {historyLoading && !messages.length && <p className="conversation-feedback" role="status">Đang tải lịch sử…</p>}
@@ -119,7 +170,7 @@ export default function ConversationThread({ conversation, loading, error, messa
               Đã gửi lời mời nhận “{offeredFile}” cho {peer.displayName}. <a href="#files">Xem tiến độ trong mục Tệp</a>.
             </p>}
             <div className="composer">
-              <textarea value={draft} onChange={event => {
+              <textarea ref={draftInput} rows={1} value={draft} onChange={event => {
                 setDraft(event.target.value)
                 onTypingChange(Boolean(event.target.value.trim()))
               }} maxLength={4000}
@@ -146,7 +197,6 @@ export default function ConversationThread({ conversation, loading, error, messa
                 <button className="send-btn" type="submit" disabled={!draft.trim() || sending || peer.isDisabled || connectionState !== 'connected'} aria-label="Gửi tin nhắn"><Icon name="send" /></button>
               </div>
             </div>
-            <p className="composer-hint">Enter để gửi · Shift + Enter để xuống dòng</p>
           </form>
         </> : <div className="conversation-thread-body"><div className="conversation-welcome">
           <Icon name="chat" size="ico-lg" /><h2>Cùng nhau kết nối</h2>

@@ -83,7 +83,7 @@ Mọi endpoint dưới đây đều yêu cầu `Authorization: Bearer <accessTok
 | --- | --- | --- |
 | GET | /api/v1/users?search=dung | Mảng thông tin tối đa 20 người phù hợp |
 | POST | /api/v1/conversations | 201 khi tạo mới, 200 khi mở lại bản ghi đã có |
-| GET | /api/v1/conversations?limit=30&beforeId=100&search=dung | Danh sách phân trang của mình |
+| GET | /api/v1/conversations?limit=30&cursor=638973216000000000:100&search=dung | Danh sách phân trang của mình |
 | GET | /api/v1/conversations/15 | Chi tiết cuộc trò chuyện mà mình tham gia |
 | GET | /api/v1/conversations/15/messages?limit=50&beforeId=200 | Lịch sử text phân trang |
 | GET | /api/v1/contacts | Danh bạ một chiều của tài khoản |
@@ -128,10 +128,13 @@ của Number bên JavaScript. Frontend giữ nguyên chuỗi khi chọn và gọ
 Ngày giờ trả về UTC. Peer luôn là người đối diện, tùy tài khoản đang xem.
 AvatarPath có trong DTO nhưng chưa có upload/hiển thị ảnh mới; UI dùng chữ viết tắt.
 
-Danh sách trả `{ items: [...], nextCursor: "15" }`; nextCursor null khi hết.
-Truyền nextCursor vào beforeId để lấy trang kế tiếp. Limit mặc định 30,
-cho phép 1–100. Danh sách xếp theo ID giảm dần (mới tạo trước), chưa xếp theo
-tin nhắn cuối. Tìm kiếm danh sách chạy trên server, không chỉ lọc trang đã tải.
+Danh sách trả `{ items: [...], nextCursor: "<timestamp-ticks>:<id>" }`;
+nextCursor null khi hết. Truyền nguyên nextCursor vào `cursor` để lấy trang kế tiếp.
+Limit mặc định 30, cho phép 1–100. Danh sách xếp theo thời gian tin nhắn mới nhất
+giảm dần, bất kể người gửi; conversation chưa có tin dùng thời điểm tạo.
+Nếu trùng thời gian thì ID conversation lớn hơn đứng trước. Frontend cũng áp dụng
+thứ tự này khi nhận/gửi tin realtime. `beforeId` vẫn được hỗ trợ cho client cũ,
+nhưng không truyền cùng `cursor`. Tìm kiếm chạy trên server, không chỉ lọc trang đã tải.
 
 POST 201 kèm header Location trỏ đến GET chi tiết. Mã lỗi: 400 cho dữ liệu sai
 hoặc chọn chính mình, 401 khi chưa xác thực/phiên hết hạn, 404 khi người được

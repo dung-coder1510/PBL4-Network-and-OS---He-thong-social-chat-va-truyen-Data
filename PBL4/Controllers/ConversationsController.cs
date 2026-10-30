@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Globalization;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -23,7 +24,8 @@ public sealed class ConversationsController(AppDbContext db, PresenceTracker pre
     private IQueryable<DirectConversation> OwnConversations(int userId) =>
         db.DirectConversations.AsNoTracking().Where(c => c.UserAID == userId || c.UserBID == userId);
 
-    private static IQueryable<ConversationDto> Project(IQueryable<DirectConversation> query, int userId) =>
+    // Kiem tra lien he theo chieu tu nguoi dang nhap den peer, khong dung danh ba cua peer.
+    private IQueryable<ConversationDto> Project(IQueryable<DirectConversation> query, int userId) =>
         query.Select(c => new ConversationDto(c.Id.ToString(),
             new ConversationUserDto(
                 c.UserAID == userId ? c.UserBID : c.UserAID,
@@ -34,7 +36,7 @@ public sealed class ConversationsController(AppDbContext db, PresenceTracker pre
                 false,
                 c.UserAID == userId ? c.UserB.LastSeenAt : c.UserA.LastSeenAt),
             DateTime.SpecifyKind(c.CreatedAt, DateTimeKind.Utc), c.Messages.Any(),
-            c.Messages.OrderByDescending(m => m.Id)
+            c.Messages.OrderByDescending(m => m.CreatedAt).ThenByDescending(m => m.Id)
                 .Select(m => new MessageDto(
                     m.Id.ToString(), m.ClientMessageId, m.ConversationId.ToString(),
                     m.SenderId, m.Content,
@@ -44,7 +46,9 @@ public sealed class ConversationsController(AppDbContext db, PresenceTracker pre
                     m.ReadAt.HasValue
                         ? DateTime.SpecifyKind(m.ReadAt.Value, DateTimeKind.Utc) : null))
                 .FirstOrDefault(),
-            c.Messages.Count(m => m.SenderId != userId && m.ReadAt == null)));
+            c.Messages.Count(m => m.SenderId != userId && m.ReadAt == null),
+            db.Contacts.Any(contact => contact.UserId == userId &&
+                contact.ContactUserId == (c.UserAID == userId ? c.UserBID : c.UserAID))));
 
     private ConversationDto WithPresence(ConversationDto conversation) => conversation with
     {
@@ -56,15 +60,18 @@ public sealed class ConversationsController(AppDbContext db, PresenceTracker pre
         }
     };
 
-    /// <summary>Danh sách của mình, mới tạo trước. Cursor theo BIGINT Id, tối đa 100 dòng/lần.</summary>
+    // Xep theo tin gan nhat; dung thoi gian tao neu chua co tin, ID pha hoa khi trung thoi gian.
+    // Cursor giu ca timestamp va ID de phan trang khong phu thuoc thu tu tao conversation.
     [HttpGet]
     public async Task<ActionResult<ConversationPageDto>> List(
         [FromQuery, Range(1, 100)] int limit = 30,
         [FromQuery] long? beforeId = null,
         [FromQuery, StringLength(100)] string? search = null,
+        [FromQuery, StringLength(64)] string? cursor = null,
         CancellationToken ct = default)
     {
-        if (beforeId <= 0) return Problem(statusCode: 400, title: "Con trỏ phân trang không hợp lệ.");
+        if (beforeId <= 0 || (beforeId.HasValue && cursor is not null))
+            return Problem(statusCode: 400, title: "Con trỏ phân trang không hợp lệ.");
         var userId = CurrentUserId;
         var query = OwnConversations(userId);
         var term = search?.Trim() ?? "";
@@ -72,12 +79,44 @@ public sealed class ConversationsController(AppDbContext db, PresenceTracker pre
             query = query.Where(c => c.UserAID == userId
                 ? c.UserB.Username.Contains(term) || c.UserB.DisplayName.Contains(term)
                 : c.UserA.Username.Contains(term) || c.UserA.DisplayName.Contains(term));
-        if (beforeId.HasValue) query = query.Where(c => c.Id < beforeId.Value);
-        var items = await Project(query.OrderByDescending(c => c.Id).Take(limit + 1), userId).ToListAsync(ct);
+        var activity = query.Select(c => new
+        {
+            Conversation = c,
+            ActivityAt = c.Messages.Max(m => (DateTime?)m.CreatedAt) ?? c.CreatedAt
+        });
+        DateTime? beforeActivity = null;
+        long? boundaryId = beforeId;
+        if (cursor is not null)
+        {
+            var parts = cursor.Split(':');
+            if (parts.Length != 2 || !long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var ticks) ||
+                ticks < DateTime.MinValue.Ticks || ticks > DateTime.MaxValue.Ticks ||
+                !long.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var id) || id <= 0)
+                return Problem(statusCode: 400, title: "Con trỏ phân trang không hợp lệ.");
+            beforeActivity = new DateTime(ticks, DateTimeKind.Utc);
+            boundaryId = id;
+        }
+        else if (beforeId.HasValue)
+        {
+            // Ho tro client cu truyen ID; chi tim moc trong cac conversation cua chinh user.
+            beforeActivity = await activity.Where(item => item.Conversation.Id == beforeId.Value)
+                .Select(item => (DateTime?)item.ActivityAt).SingleOrDefaultAsync(ct);
+            if (!beforeActivity.HasValue)
+                return Problem(statusCode: 400, title: "Con trỏ phân trang không hợp lệ.");
+        }
+        if (beforeActivity.HasValue)
+            activity = activity.Where(item => item.ActivityAt < beforeActivity.Value ||
+                (item.ActivityAt == beforeActivity.Value && item.Conversation.Id < boundaryId!.Value));
+        var ordered = activity.OrderByDescending(item => item.ActivityAt).ThenByDescending(item => item.Conversation.Id);
+        var items = await Project(ordered.Take(limit + 1).Select(item => item.Conversation), userId).ToListAsync(ct);
         var hasMore = items.Count > limit;
         if (hasMore) items.RemoveAt(items.Count - 1);
         items = items.Select(WithPresence).ToList();
-        return Ok(new ConversationPageDto(items, hasMore ? items[^1].Id : null));
+        var last = items.LastOrDefault();
+        var nextCursor = hasMore && last is not null
+            ? (last.LastMessage?.CreatedAt ?? last.CreatedAt).Ticks.ToString(CultureInfo.InvariantCulture) + ":" + last.Id
+            : null;
+        return Ok(new ConversationPageDto(items, nextCursor));
     }
 
     /// <summary>404 cho cả ID không tồn tại và cuộc trò chuyện của người khác để không lộ dữ liệu.</summary>

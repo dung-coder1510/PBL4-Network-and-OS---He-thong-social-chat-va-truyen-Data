@@ -14,7 +14,7 @@ public sealed record ConversationUserDto(int Id, string Username, string Display
 
 // BIGINT trả bằng chuỗi để JavaScript không làm tròn ID lớn hơn Number.MAX_SAFE_INTEGER.
 public sealed record ConversationDto(string Id, ConversationUserDto Peer,
-    DateTime CreatedAt, bool HasMessages, MessageDto? LastMessage, int UnreadCount);
+    DateTime CreatedAt, bool HasMessages, MessageDto? LastMessage, int UnreadCount, bool IsContact);
 
 public sealed record ConversationPageDto(IReadOnlyList<ConversationDto> Items, string? NextCursor);
 

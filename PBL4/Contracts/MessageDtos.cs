@@ -13,7 +13,7 @@ public sealed class SendMessageDto
     public string Content { get; set; } = "";
 }
 
-// BIGINT dùng chuỗi để JavaScript không làm tròn ID lớn hơn Number.MAX_SAFE_INTEGER.
+// BIGINT dung chuoi de JavaScript khong lam tron ID lon hon Number.MAX_SAFE_INTEGER.
 public sealed record MessageDto(string Id, Guid ClientMessageId, string ConversationId,
     int SenderId, string Content, DateTime CreatedAt,
     DateTime? DeliveredAt, DateTime? ReadAt);
@@ -29,8 +29,11 @@ public sealed class MessageReceiptRequestDto
     public string UpToMessageId { get; set; } = "";
 }
 
+// MessageId co gia tri: chi cap nhat dung tin do; null: receipt cong don den UpToMessageId.
+// UnreadCount la so chua doc server dem lai sau exact read, khong phai so tin vua doc.
 public sealed record MessageStatusDto(string ConversationId, string UpToMessageId,
-    int RecipientUserId, DateTime DeliveredAt, DateTime? ReadAt);
+    int RecipientUserId, DateTime DeliveredAt, DateTime? ReadAt, string? MessageId = null,
+    int? UnreadCount = null);
 
 public sealed class TypingRequestDto
 {
