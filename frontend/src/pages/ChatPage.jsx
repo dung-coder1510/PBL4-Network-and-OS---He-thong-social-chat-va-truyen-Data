@@ -382,6 +382,20 @@ export default function ChatPage({ token, user, initialConversationId,
 
   // Doi conversation, dung typing cu va reset thread/cursor; khong mang ban nhap sang nguoi khac.
   function select(id) {
+    // Chọn lại chat hiện tại chỉ là thao tác hiển thị, không phải yêu cầu làm mới dữ liệu.
+    // Dùng ref vì nó được cập nhật ngay khi chọn: chặn cả các lần bấm liên tiếp trước
+    // khi React render hoặc khi request đầu tiên vẫn đang tải. Không reset messages,
+    // cursor, typing hay pendingReads; không tăng revision gây tải lại detail/messages/files.
+    if (selectedIdRef.current === id) {
+      // Trên mobile, người dùng có thể quay về danh sách rồi mở lại cùng chat.
+      // Vẫn mở khung chat để effect đánh dấu đã đọc hoạt động, nhưng giữ dữ liệu/bản nháp.
+      showListRef.current = false
+      setShowList(false)
+      return
+    }
+
+    // Chỉ chuyển sang ID khác mới reset thread và tải dữ liệu của người nhận mới.
+    // Retry sau lỗi và đồng bộ sau reconnect vẫn có đường riêng để tăng revision.
     stopTyping()
     selectedIdRef.current = id
     pendingReads.current.clear()
