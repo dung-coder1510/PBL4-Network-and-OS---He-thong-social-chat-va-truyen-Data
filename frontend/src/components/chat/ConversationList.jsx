@@ -1,5 +1,6 @@
 import Avatar from '../Avatar.jsx'
 import Icon from '../Icon.jsx'
+import { latestConversationActivity } from '../../utils/chatState.js'
 
 function formatActivityTime(value) {
   const date = new Date(value)
@@ -32,9 +33,10 @@ export default function ConversationList({ items, loading, error, query, onQuery
       <div className="conv-items" aria-busy={loading}>
         {error && <div className="conversation-feedback" role="alert"><p>{error}</p><button className="btn" onClick={onRefresh}>Thử lại</button></div>}
         {items.map(item => {
-          const activityAt = item.lastMessage?.createdAt || item.createdAt
+          const activity = latestConversationActivity(item)
+          const activityAt = activity?.createdAt || item.createdAt
           const preview = item.peer.isDisabled ? 'Tài khoản không khả dụng'
-            : item.lastMessage ? `${item.lastMessage.senderId === currentUserId ? 'Bạn: ' : ''}${item.lastMessage.content}`
+            : activity ? `${activity.senderId === currentUserId ? 'Bạn: ' : ''}${activity.fileName ? '[Tệp] ' + activity.fileName : activity.content}`
             : 'Chưa có tin nhắn'
           return (
           <button className={`conv-item${selectedId === item.id ? ' selected' : ''}`} type="button"

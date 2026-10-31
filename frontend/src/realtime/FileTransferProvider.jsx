@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useChatRealtime } from './chatRealtimeContext.js'
 import { FileTransferContext } from './fileTransferContext.js'
 import { createFileTransfers } from '../services/fileTransfers.js'
@@ -9,6 +9,8 @@ export function FileTransferProvider({ token, user, children }) {
   const manager = useRef(null)
   const [snapshot, setSnapshot] = useState({ items: [], nextCursor: null })
   const [notice, setNotice] = useState('')
+  // Giu callback on dinh de progress file khong kich hoat lai effect tai lich su trong ChatPage.
+  const loadConversation = useCallback((...args) => manager.current?.loadConversation(...args) || Promise.resolve(), [])
 
   useEffect(() => {
     if (!connection) return
@@ -31,13 +33,14 @@ export function FileTransferProvider({ token, user, children }) {
   return (
     <FileTransferContext.Provider value={{
       ...snapshot, connectionState, connectionId: connection?.connectionId,
+      loadConversation,
       offer: (...args) => manager.current.offer(...args),
       action: (...args) => manager.current.action(...args),
       loadMore: () => manager.current.load(true),
       forgetDownload: id => manager.current.forgetDownload(id),
     }}>
       {notice && <div className="file-notice" role="status">
-        <a href="#files">{notice}</a>
+        <a href="#chat">{notice}</a>
         <button type="button" aria-label="Đóng thông báo tệp" onClick={() => setNotice('')}>×</button>
       </div>}
       {children}

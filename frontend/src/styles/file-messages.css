@@ -1,0 +1,23 @@
+.msg.msg--file { width: fit-content; max-width: min(360px, 72%); }
+.file-message-card { min-width: 0; border: 0; white-space: normal; }
+.file-message-main { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.file-message-icon { flex: 0 0 34px; height: 38px; display: grid; place-items: center; border-radius: 6px; background: var(--surface); color: var(--accent); font-size: 10px; font-weight: 700; }
+.file-message-icon.type-w, .file-message-icon.type-x, .file-message-icon.type-p { font-size: 20px; }
+.file-message-card.outgoing .file-message-icon { background: var(--surface); color: inherit; }
+.file-message-info { min-width: 0; flex: 1; }
+.file-message-name { display: block; font-size: 13px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.file-message-size { display: block; margin-top: 2px; font-size: 12px; opacity: .8; }
+.file-message-progress { margin-top: 8px; font-size: 11px; }
+.file-message-progress progress { display: block; width: 100%; height: 5px; margin-bottom: 5px; accent-color: var(--accent); }
+.file-message-card.outgoing progress { accent-color: var(--bubble-out-text); }
+.file-message-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.file-card-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 12px; font-weight: 600; }
+.file-card-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.file-message-card.outgoing .file-card-button { border-color: var(--border); background: var(--surface); color: var(--text); }
+.file-message-meta { flex-wrap: wrap; }
+.file-message-hint { margin-top: 8px; font-size: 11px; opacity: .8; }
+.file-message-error { margin-top: 8px; color: var(--red); font-size: 12px; overflow-wrap: anywhere; }
+.file-message-card.outgoing .file-message-error { color: var(--red); }
+@media (max-width: 600px) {
+  .msg.msg--file { max-width: 90%; }
+}

@@ -239,7 +239,8 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
         finally { gate.Release(); }
     }
 
-    public async Task<FilePageDto> ListAsync(int userId, long? beforeId)
+    // Loc rieng conversation khi mo chat; van kiem tra thanh vien o moi truy van lich su file.
+    public async Task<FilePageDto> ListAsync(int userId, long? beforeId, long? conversationId = null)
     {
         await gate.WaitAsync();
         try
@@ -248,6 +249,7 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var rows = await db.FileTransfers.AsNoTracking().Include(item => item.Conversation)
                 .Where(item => (item.Conversation.UserAID == userId || item.Conversation.UserBID == userId) &&
+                    (!conversationId.HasValue || item.ConversationId == conversationId.Value) &&
                     (!beforeId.HasValue || item.Id < beforeId.Value))
                 .OrderByDescending(item => item.Id).Take(51).ToListAsync();
             var more = rows.Count > 50;

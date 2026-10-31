@@ -12,11 +12,22 @@ Không thêm thư viện runtime, migration hoặc cột database; sử dụng b
 2. Ngay trong cuộc trò chuyện, bấm **Gửi file** cạnh ô soạn tin rồi chọn file tối đa
    **100 MiB**. Lời mời tự gửi đến người đang trò chuyện, không cần chọn lại người nhận;
    bản nháp tin nhắn được giữ nguyên. Hoặc mở **Tệp**, chọn cuộc trò chuyện/file và bấm **Gửi lời mời**.
-3. Người nhận thấy thông báo dù đang ở trang chat. Mở **Tệp**, chọn **Chấp nhận** hoặc **Từ chối**.
-4. Giữ hai tab mở. Giao diện hiển thị số byte, tốc độ trung bình và trạng thái.
+3. Ngay khi gửi lời mời, cả hai thấy một thẻ file xen kẽ tin nhắn trong đúng cuộc trò chuyện.
+   Người nhận chọn **Nhận file** hoặc **Từ chối** ngay trên thẻ; người gửi có **Hủy gửi**.
+   Trang **Tệp** vẫn hiển thị cùng phiên truyền để xem tổng hợp.
+4. Giữ hai tab mở. Cùng thẻ đó cập nhật tiến độ, số byte, tốc độ trung bình và nút **Hủy**.
    Hết byte gửi chưa có nghĩa là đã hoàn tất: cần người nhận xác nhận đủ byte và SHA-256.
 5. Người nhận bấm **Tải xuống** để lưu file về máy. Có thể đổi trang trong ứng dụng
    trong lúc truyền. Đóng/reload tab làm mất file chưa lưu; lịch sử SQL không chứa nội dung file.
+
+Thẻ hoàn tất hiển thị **Đã gửi** ở bên gửi và **Sẵn sàng tải xuống** khi tab nhận
+còn giữ dữ liệu. Sau reload hoặc giải phóng tệp, lịch sử vẫn hiện tên/kích thước/trạng thái,
+nhưng không tạo nút tải xuống khi không còn Blob. Hệ thống không tự khẳng định file đã lưu xuống ổ đĩa.
+
+Lịch sử riêng lấy từ `GET /api/v1/conversations/{id}/files?beforeId=...`, mỗi trang tối đa
+50 phiên, kiểm tra quyền thành viên trước khi trả metadata. Trong chat, **Xem tin nhắn cũ hơn**
+tải cả các trang text/file còn lại. Lời mời file cập nhật preview `[Tệp] tên_file` và thời gian
+hoạt động của conversation; không chèn tin text giả vào bảng `Messages`.
 
 ## Đường truyền
 
@@ -162,6 +173,19 @@ node tests/files.integration.mjs
 Script tạo tài khoản có prefix ngẫu nhiên, chỉ xóa dữ liệu mình tạo trong `finally`.
 Có kiểm tra hết hạn thật nên mất hơn 60 giây. Bài này kiểm tra control plane;
 nó mô phỏng SDP/hash, không thay thế bài truyền byte bằng browser.
+
+Kiểm tra thẻ file ngay trong chat:
+
+```powershell
+node tests/chat-file-state.mjs
+$env:TEXT_TEST_ORIGIN = 'http://127.0.0.1:5173'
+$env:CODEX_NODE_MODULES = 'duong-dan-node_modules-co-playwright'
+node tests/chat-files.e2e.mjs
+```
+
+Chạy một backend thử với database riêng; không dùng hai backend cùng database vì registry
+phiên file nằm trong RAM từng tiến trình. Bài browser kiểm tra lời mời ở hai bên,
+truyền byte/hash thật, nhận/từ chối/hủy/lỗi kênh, timeline, quyền truy cập, reload và phân trang file.
 
 Đã kiểm tra ngày 2026-10-20 trên Chrome local:
 

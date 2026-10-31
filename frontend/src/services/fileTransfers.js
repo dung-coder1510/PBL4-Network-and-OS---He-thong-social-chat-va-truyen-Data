@@ -17,6 +17,7 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
   const downloads = new Map()
   const starting = new Map()
   const changes = new EventTarget()
+  const conversationPages = new Map()
   const abort = new AbortController()
   let configuration
   let disposed = false
@@ -28,6 +29,7 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     onChange({
       items: [...transfers.values()].sort((left, right) => BigInt(left.id) > BigInt(right.id) ? -1 : 1),
       nextCursor,
+      conversationPages: Object.fromEntries(conversationPages),
     })
   }
   const config = () => configuration ??= request('/files/configuration', { token, signal: abort.signal })
@@ -234,7 +236,7 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     const ownEndpoint = transfer.senderConnectionId === connection.connectionId ||
       transfer.receiverConnectionId === connection.connectionId
     if (transfer.status === 'offered' && !previous && transfer.receiverId === userId)
-      onNotice(`Có lời mời nhận tệp “${transfer.fileName}”. Mở mục Tệp để chấp nhận.`)
+      onNotice(`Có lời mời nhận tệp “${transfer.fileName}”. Mở cuộc trò chuyện để nhận.`)
     if (transfer.status === 'accepted' && ownEndpoint && !previous?.localFailure)
       void startPeer(transfer)
     if (!isFileActive(transfer)) {
@@ -297,6 +299,26 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     emit()
   }
 
+  // Tai tung trang file cua chat, khong de 50 file toan tai khoan lam mat lich su chat cu.
+  async function loadConversation(conversationId, older = false) {
+    const previous = conversationPages.get(conversationId)
+    if (disposed || previous?.loading || (older && !previous?.nextCursor)) return
+    conversationPages.set(conversationId, { ...previous, loading: true, error: '' })
+    emit()
+    try {
+      const query = older ? '?' + new URLSearchParams({ beforeId: previous.nextCursor }) : ''
+      const page = await request('/conversations/' + encodeURIComponent(conversationId) + '/files' + query,
+        { token, signal: abort.signal })
+      if (disposed) return
+      for (const item of page.items) changed(item)
+      conversationPages.set(conversationId, { nextCursor: page.nextCursor, loading: false, error: '' })
+    } catch (error) {
+      if (!disposed) conversationPages.set(conversationId,
+        { ...previous, loading: false, error: error.message })
+      throw error
+    } finally { emit() }
+  }
+
   function disconnected() {
     for (const id of [...peers.keys()]) releasePeer(id)
     pending.clear()
@@ -311,7 +333,7 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
   connection.on('FileChanged', changed)
   connection.on('FileSignal', signalReceived)
   return {
-    load, action, disconnected, forgetDownload,
+    load, loadConversation, action, disconnected, forgetDownload,
     async offer(conversationId, file) {
       if (!file || file.size > MAX_FILE_BYTES) throw new Error('Chọn tệp tối đa 100 MiB.')
       if (!globalThis.RTCPeerConnection || !globalThis.crypto?.subtle)

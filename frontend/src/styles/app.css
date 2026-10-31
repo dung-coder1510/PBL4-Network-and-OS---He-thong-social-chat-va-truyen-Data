@@ -36,8 +36,8 @@
 
   /* Message bubbles */
   --bubble-in:   #F1F5F9;
-  --bubble-out:  #2563EB;
-  --bubble-out-text: #FFFFFF;
+  --bubble-out:  #DCEBFF;
+  --bubble-out-text: #17365D;
 
   /* Sizes */
   --sidebar-w:   228px;
@@ -86,8 +86,8 @@
   --amber:       #E3B341;
 
   --bubble-in:   #21262D;
-  --bubble-out:  #1F6FEB;
-  --bubble-out-text: #FFFFFF;
+  --bubble-out:  #294B73;
+  --bubble-out-text: #EAF3FF;
 
   --shadow-sm: 0 1px 3px rgba(0,0,0,.4);
   --shadow:    0 4px 16px rgba(0,0,0,.4);
