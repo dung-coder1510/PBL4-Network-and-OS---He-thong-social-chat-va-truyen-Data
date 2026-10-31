@@ -48,7 +48,10 @@ public sealed class ConversationsController(AppDbContext db, PresenceTracker pre
                 .FirstOrDefault(),
             c.Messages.Count(m => m.SenderId != userId && m.ReadAt == null),
             db.Contacts.Any(contact => contact.UserId == userId &&
-                contact.ContactUserId == (c.UserAID == userId ? c.UserBID : c.UserAID))));
+                contact.ContactUserId == (c.UserAID == userId ? c.UserBID : c.UserAID)),
+            c.FileTransfers.OrderByDescending(f => f.CreatedAt).ThenByDescending(f => f.Id)
+                .Select(f => new ConversationFileDto(f.Id.ToString(), f.SenderId, f.FileName,
+                    DateTime.SpecifyKind(f.CreatedAt, DateTimeKind.Utc))).FirstOrDefault()));
 
     private ConversationDto WithPresence(ConversationDto conversation) => conversation with
     {
@@ -79,10 +82,17 @@ public sealed class ConversationsController(AppDbContext db, PresenceTracker pre
             query = query.Where(c => c.UserAID == userId
                 ? c.UserB.Username.Contains(term) || c.UserB.DisplayName.Contains(term)
                 : c.UserA.Username.Contains(term) || c.UserA.DisplayName.Contains(term));
-        var activity = query.Select(c => new
+        var timestamps = query.Select(c => new
         {
             Conversation = c,
-            ActivityAt = c.Messages.Max(m => (DateTime?)m.CreatedAt) ?? c.CreatedAt
+            MessageAt = c.Messages.Max(m => (DateTime?)m.CreatedAt),
+            FileAt = c.FileTransfers.Max(f => (DateTime?)f.CreatedAt)
+        });
+        var activity = timestamps.Select(item => new
+        {
+            item.Conversation,
+            ActivityAt = item.FileAt.HasValue && (!item.MessageAt.HasValue || item.FileAt >= item.MessageAt)
+                ? item.FileAt.Value : item.MessageAt ?? item.Conversation.CreatedAt
         });
         DateTime? beforeActivity = null;
         long? boundaryId = beforeId;
@@ -113,8 +123,11 @@ public sealed class ConversationsController(AppDbContext db, PresenceTracker pre
         if (hasMore) items.RemoveAt(items.Count - 1);
         items = items.Select(WithPresence).ToList();
         var last = items.LastOrDefault();
+        var lastActivity = last?.LastFile is not null &&
+            (last.LastMessage is null || last.LastFile.CreatedAt >= last.LastMessage.CreatedAt)
+            ? last.LastFile.CreatedAt : last?.LastMessage?.CreatedAt ?? last?.CreatedAt;
         var nextCursor = hasMore && last is not null
-            ? (last.LastMessage?.CreatedAt ?? last.CreatedAt).Ticks.ToString(CultureInfo.InvariantCulture) + ":" + last.Id
+            ? lastActivity!.Value.Ticks.ToString(CultureInfo.InvariantCulture) + ":" + last.Id
             : null;
         return Ok(new ConversationPageDto(items, nextCursor));
     }

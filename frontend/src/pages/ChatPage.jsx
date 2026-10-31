@@ -11,7 +11,8 @@ import {
 import { useChatRealtime } from '../realtime/chatRealtimeContext.js'
 import { useFileTransfers } from '../realtime/fileTransferContext.js'
 import {
-  applyMessageStatus, applyPresence, createClientMessageId, mergeChatMessages, sortConversations, upsertConversationMessage,
+  applyMessageStatus, applyPresence, createClientMessageId, mergeChatMessages, sortConversations,
+  upsertConversationMessage, upsertConversationFile,
 } from '../utils/chatState.js'
 import '../styles/conversations.css'
 
@@ -29,6 +30,7 @@ export default function ChatPage({ token, user, initialConversationId,
   const { connection, connectionState, connectionError, reconnect, subscribeSync,
     subscribeMessages, ensureTextSession, sendTextMessage, textStates } = useChatRealtime()
   const files = useFileTransfers()
+  const { loadConversation: loadConversationFiles } = files
   const [items, setItems] = useState([])
   const itemsRef = useRef([])
   const [query, setQuery] = useState('')
@@ -50,6 +52,7 @@ export default function ChatPage({ token, user, initialConversationId,
   const [historyBefore, setHistoryBefore] = useState(null)
   const [nextHistoryCursor, setNextHistoryCursor] = useState(null)
   const [historyRevision, setHistoryRevision] = useState(0)
+  const filePage = files.conversationPages?.[selectedId]
   const connectionRef = useRef(connection)
   const pendingReads = useRef(new Set())
   const typingActiveRef = useRef(false)
@@ -152,11 +155,20 @@ export default function ChatPage({ token, user, initialConversationId,
     return () => controller.abort()
   }, [token, selectedId, historyBefore, historyRevision, onSessionExpired])
 
+  // Tai lich su file cua dung chat; loi xac thuc van di qua callback chung cua phien dang nhap.
+  useEffect(() => {
+    if (!selectedId || connectionState !== 'connected') return
+    void loadConversationFiles(selectedId).catch(failure => {
+      if (failure.status === 401) onSessionExpired()
+    })
+  }, [selectedId, connectionState, loadConversationFiles, historyRevision, onSessionExpired])
+
   // Dang ky tin/receipt/presence/typing cho UI; bo listener va timer khi ket noi hoac trang thay doi.
   useEffect(() => {
     if (!connection) return undefined
     let disposed = false
     const pendingConversations = new Map()
+    const pendingFileConversations = new Map()
     connectionRef.current = connection
 
     // Xu ly chung tin P2P/SignalR: doi preview/unread va them vao thread neu dung conversation.
@@ -205,6 +217,23 @@ export default function ChatPage({ token, user, initialConversationId,
         setMessages(current => mergeMessages(current, [received]))
     })
 
+    // FileChanged doi preview mot lan theo metadata; khong tao tin text gia cho moi trang thai file.
+    function fileChanged(transfer) {
+      const known = itemsRef.current.some(item => item.id === transfer.conversationId)
+      changeItems(current => upsertConversationFile(current, transfer))
+      if (known || queryRef.current.trim()) return
+      const pending = pendingFileConversations.get(transfer.conversationId)
+      if (pending) { pending.transfer = transfer; return }
+      const entry = { transfer }
+      pendingFileConversations.set(transfer.conversationId, entry)
+      conversationsApi.get(token, transfer.conversationId).then(result => {
+        if (!disposed) changeItems(current => upsertConversationFile(current, entry.transfer, result))
+      }).catch(failure => {
+        if (!disposed && failure.status === 401) onSessionExpired()
+      }).finally(() => pendingFileConversations.delete(transfer.conversationId))
+    }
+    connection.on('FileChanged', fileChanged)
+
     // Gop receipt vao thread/preview; exact read dung unread count cua server, khong tu xoa tat ca.
     const removeStatusListener = listenForMessageStatuses(connection, status => {
       setMessages(current => applyMessageStatus(current, status))
@@ -245,6 +274,7 @@ export default function ChatPage({ token, user, initialConversationId,
       removeStatusListener()
       removePresenceListener()
       removeTypingListener()
+      connection.off('FileChanged', fileChanged)
       if (connectionRef.current === connection) connectionRef.current = null
     }
   }, [connection, subscribeMessages, token, onSessionExpired, user.id])
@@ -405,10 +435,15 @@ export default function ChatPage({ token, user, initialConversationId,
 
   // Chuyen cursor ve trang tin cu hon; effect lich su se tai va gop vao thread hien tai.
   function loadOlderMessages() {
-    if (!nextHistoryCursor || historyLoading) return
-    setHistoryLoading(true)
-    setHistoryError('')
-    setHistoryBefore(nextHistoryCursor)
+    if (historyLoading || filePage?.loading) return
+    if (nextHistoryCursor) {
+      setHistoryLoading(true)
+      setHistoryError('')
+      setHistoryBefore(nextHistoryCursor)
+    }
+    if (filePage?.nextCursor) void loadConversationFiles(selectedId, true).catch(failure => {
+      if (failure.status === 401) onSessionExpired()
+    })
   }
 
   // Chi an nhan Nguoi la sau khi popup luu thanh cong; cap nhat theo peer de khong nham thread.
@@ -463,7 +498,9 @@ export default function ChatPage({ token, user, initialConversationId,
       <ConversationThread key={conversation?.id || selectedId || 'empty'}
         conversation={conversation} loading={detailLoading} error={detailError}
         messages={messages} currentUserId={user.id} historyLoading={historyLoading}
-        historyError={historyError} hasOlder={Boolean(nextHistoryCursor)}
+        transfers={files.items.filter(item => item.conversationId === selectedId)}
+        fileHistoryLoading={Boolean(filePage?.loading)} fileHistoryError={filePage?.error}
+        historyError={historyError} hasOlder={Boolean(nextHistoryCursor || filePage?.nextCursor)}
         connectionState={connectionState} connectionError={connectionError}
         textState={textStates[selectedId]}
         peerTyping={peerTyping} onTypingChange={typingChanged} onBack={() => {

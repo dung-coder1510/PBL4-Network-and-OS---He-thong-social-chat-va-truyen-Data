@@ -54,15 +54,35 @@ function isNewerMessage(message, previous) {
 }
 
 // Dung timestamp tin cuoi o ca REST va realtime; ID conversation chi dung khi trung timestamp.
+export function latestConversationActivity(conversation) {
+  const message = conversation.lastMessage
+  const file = conversation.lastFile
+  return file && (!message || Date.parse(file.createdAt) >= Date.parse(message.createdAt))
+    ? file : message
+}
+
+// Sap xep text va file cung quy tac; chat rong dung ngay tao conversation.
 export function sortConversations(items) {
   return [...items].sort((a, b) => {
-    const difference = Date.parse(b.lastMessage?.createdAt || b.createdAt) -
-      Date.parse(a.lastMessage?.createdAt || a.createdAt)
+    const difference = Date.parse(latestConversationActivity(b)?.createdAt || b.createdAt) -
+      Date.parse(latestConversationActivity(a)?.createdAt || a.createdAt)
     if (difference) return difference
     const aId = persistedId(a.id)
     const bId = persistedId(b.id)
     return aId !== null && bId !== null ? (aId > bId ? -1 : aId < bId ? 1 : 0) : 0
   })
+}
+
+// Loi moi file cung la hoat dong chat; khong tao tin text gia hay tang unread cua text.
+export function upsertConversationFile(items, transfer, conversation = null) {
+  const current = items.find(item => item.id === transfer.conversationId)
+  const base = current || conversation
+  if (!base) return items
+  if (base.lastFile && !isNewerMessage(transfer, base.lastFile))
+    return current ? items : sortConversations([...items, base])
+  const updated = { ...base, lastFile: { id: transfer.id, senderId: transfer.senderId,
+    fileName: transfer.fileName, createdAt: transfer.createdAt } }
+  return sortConversations(current ? items.map(item => item.id === updated.id ? updated : item) : [...items, updated])
 }
 
 // Them/cap nhat conversation tu mot tin, doi preview, sap lai danh sach va tinh so chua doc.

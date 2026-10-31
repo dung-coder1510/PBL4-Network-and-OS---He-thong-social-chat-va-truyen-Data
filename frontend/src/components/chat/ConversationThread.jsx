@@ -2,6 +2,9 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import Avatar from '../Avatar.jsx'
 import Icon from '../Icon.jsx'
 import { textRouteLabel } from '../../services/textProtocol.js'
+import FileMessageCard from './FileMessageCard.jsx'
+import { chatTimeline } from '../../utils/chatTimeline.js'
+import '../../styles/file-messages.css'
 
 // Hien timestamp server theo gio dia phuong cua trinh duyet voi dinh dang gio/phut tieng Viet.
 function formatTime(value) {
@@ -13,7 +16,8 @@ function formatTime(value) {
 export default function ConversationThread({ conversation, loading, error, messages,
   currentUserId, historyLoading, historyError, hasOlder, connectionState, connectionError,
   peerTyping, onTypingChange, onBack, onRetry, onRetryHistory, onLoadOlder, onSend,
-  onRetryMessage, onReconnect, onCreate, onSendFile, textState, onAddContact }) {
+  onRetryMessage, onReconnect, onCreate, onSendFile, textState, onAddContact,
+  transfers = [], fileHistoryLoading, fileHistoryError }) {
   const peer = conversation?.peer
   const messageList = useRef(null)
   const draftInput = useRef(null)
@@ -23,12 +27,12 @@ export default function ConversationThread({ conversation, loading, error, messa
   const fileInput = useRef(null)
   const [sendingFile, setSendingFile] = useState(false)
   const [fileError, setFileError] = useState('')
-  const [offeredFile, setOfferedFile] = useState('')
+  const timeline = chatTimeline(messages, transfers)
 
   // Cuon toi cuoi khi doi conversation hoac so tin thay doi, truoc khi trinh duyet ve khung moi.
   useLayoutEffect(() => {
     if (messageList.current) messageList.current.scrollTop = messageList.current.scrollHeight
-  }, [conversation?.id, messages.length])
+  }, [conversation?.id, timeline.length])
 
   // Do lai noi dung de o nhap tu gian khi go, dan chu va thu gon khi xoa hoac gui xong.
   useLayoutEffect(() => {
@@ -88,10 +92,8 @@ export default function ConversationThread({ conversation, loading, error, messa
     if (!file || sendingFile) return
     setSendingFile(true)
     setFileError('')
-    setOfferedFile('')
     try {
       await onSendFile(file)
-      setOfferedFile(file.name)
     } catch (failure) {
       setFileError(failure.message || 'Chưa gửi được lời mời nhận tệp.')
     } finally {
@@ -136,15 +138,26 @@ export default function ConversationThread({ conversation, loading, error, messa
               </button>
             </div>
           </aside>}
-          <div className="messages" ref={messageList} role="log" aria-live="polite" aria-busy={historyLoading}>
-            {hasOlder && <button className="btn conversation-older" type="button" onClick={onLoadOlder} disabled={historyLoading}>Xem tin nhắn cũ hơn</button>}
+          <div className="messages" ref={messageList} role="log" aria-live="polite" aria-busy={historyLoading || fileHistoryLoading}>
+            {hasOlder && <button className="btn conversation-older" type="button" onClick={onLoadOlder} disabled={historyLoading || fileHistoryLoading}>Xem tin nhắn cũ hơn</button>}
             {historyLoading && !messages.length && <p className="conversation-feedback" role="status">Đang tải lịch sử…</p>}
             {historyError && <div className="conversation-feedback" role="alert"><p>{historyError}</p><button className="btn" type="button" onClick={onRetryHistory}>Thử lại</button></div>}
-            {!historyLoading && !historyError && !messages.length && <div className="conversation-welcome conversation-welcome--messages">
+            {fileHistoryError && <div className="conversation-feedback" role="alert"><p>Chưa tải được lịch sử tệp: {fileHistoryError}</p><button className="btn" type="button" onClick={onRetryHistory}>Thử lại</button></div>}
+            {fileHistoryLoading && !timeline.length && <p className="conversation-feedback" role="status">Đang tải lịch sử tệp…</p>}
+            {!historyLoading && !fileHistoryLoading && !historyError && !fileHistoryError && !timeline.length && <div className="conversation-welcome conversation-welcome--messages">
               <Avatar person={{ id: peer.id, name: peer.displayName }} size="xl" />
               <h2>{peer.displayName}</h2><p>Chưa có tin nhắn. Bạn gửi lời chào đầu tiên nhé.</p>
             </div>}
-            {messages.map(message => {
+            {timeline.map(entry => {
+              if (entry.kind === 'file') {
+                const transfer = entry.value
+                const self = transfer.senderId === currentUserId
+                return <div className={`msg msg--file${self ? ' self' : ''}`} key={entry.key}>
+                  {!self && <Avatar person={{ id: peer.id, name: peer.displayName }} size="sm" />}
+                  <div className="bubble-wrap"><FileMessageCard transfer={transfer} currentUserId={currentUserId} /></div>
+                </div>
+              }
+              const message = entry.value
               const self = message.senderId === currentUserId
               return <div className={`msg${self ? ' self' : ''}`} key={`${message.senderId}:${message.clientMessageId}`}>
                 {!self && <Avatar person={{ id: peer.id, name: peer.displayName }} size="sm" />}
@@ -165,10 +178,7 @@ export default function ConversationThread({ conversation, loading, error, messa
             {connectionError && <div className="composer-alert" role="alert">{connectionError} <button type="button" onClick={onReconnect}>Kết nối lại</button></div>}
             {sendError && <p className="composer-alert" role="alert">{sendError}</p>}
             {fileError && <p className="composer-alert" role="alert">{fileError}</p>}
-            {sendingFile && <p className="composer-file-notice" role="status">Đang chuẩn bị tệp và tính SHA-256…</p>}
-            {offeredFile && <p className="composer-file-notice" role="status">
-              Đã gửi lời mời nhận “{offeredFile}” cho {peer.displayName}. <a href="#files">Xem tiến độ trong mục Tệp</a>.
-            </p>}
+            {sendingFile && <p className="composer-file-notice" role="status">Đang chuẩn bị tệp…</p>}
             <div className="composer">
               <textarea ref={draftInput} rows={1} value={draft} onChange={event => {
                 setDraft(event.target.value)

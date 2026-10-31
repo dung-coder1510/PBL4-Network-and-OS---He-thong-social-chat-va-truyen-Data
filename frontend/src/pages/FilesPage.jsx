@@ -26,12 +26,12 @@ export default function FilesPage({ token, user, onSessionExpired }) {
     const controller = new AbortController()
     async function load() {
       const items = []
-      let beforeId
+      let cursor
       do {
-        const page = await conversationsApi.list(token, { beforeId }, controller.signal)
+        const page = await conversationsApi.list(token, { cursor }, controller.signal)
         items.push(...page.items)
-        beforeId = page.nextCursor
-      } while (beforeId)
+        cursor = page.nextCursor
+      } while (cursor)
       if (!controller.signal.aborted) setConversations(items)
     }
     load().catch(failure => {
