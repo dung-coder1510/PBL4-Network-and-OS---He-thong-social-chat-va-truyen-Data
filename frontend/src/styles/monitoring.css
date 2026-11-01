@@ -1,0 +1,12 @@
+.monitoring h2 { margin-top: 2rem; }
+.monitoring small { display: block; }
+.monitoring input { margin: .5rem; padding: .5rem; }
+.monitoring .btn { margin: .25rem; }
+.monitor-age { display: inline-block; border: 1px solid currentColor; border-radius: 6px; padding: .25rem .5rem; margin: .25rem; }
+.monitor-age.fresh { color: #15803d; }
+.monitor-age.late { color: #a16207; }
+.monitor-age.stale { color: #dc2626; }
+.monitor-age.unknown { color: #64748b; }
+.monitor-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+.monitor-chart { margin: 0; border: 1px solid #94a3b8; padding: 1rem; border-radius: 8px; }
+.monitor-chart svg { width: 100%; color: #2563eb; }

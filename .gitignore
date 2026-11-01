@@ -8,3 +8,7 @@ dist/
 # Local application configuration
 /PBL4/appsettings.json
 /deploy/*.env
+
+# Runtime monitoring archives (account/connection metadata; never publish).
+/PBL4/App_Data/monitoring/
+/artifacts/monitoring-build/

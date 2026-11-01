@@ -49,6 +49,10 @@ public static class AuthSetup
         });
         services.AddRateLimiter(options =>
         {
+            // Poll admin tối đa 30 lần/phút/IP (dashboard mặc định 12); không xếp hàng.
+            options.AddPolicy("monitoring", context => RateLimitPartition.GetFixedWindowLimiter(
+                context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+                _ => new FixedWindowRateLimiterOptions { PermitLimit = 30, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
             // Giới hạn riêng theo IP; không tin X-Forwarded-For chưa được proxy xác thực.
             options.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(
                 context.Connection.RemoteIpAddress?.ToString() ?? "unknown",

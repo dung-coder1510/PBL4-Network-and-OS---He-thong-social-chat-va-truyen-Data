@@ -16,6 +16,24 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
   const peers = new Map()
   const downloads = new Map()
   const starting = new Map()
+  const observations = new Map()
+  // Báo cáo giám sát không chặn truyền file. Giới hạn cả tần suất và request đang chờ;
+  // không gửi exception thô, SDP hoặc nội dung file. Backend xác thực endpoint độc lập.
+  function observe(id, stage, bytes = null, reason = null) {
+    const previous = observations.get(id)
+    const now = performance.now()
+    if (disposed || connection.state !== 'Connected') return
+    if (previous?.busy) { previous.next = { stage, bytes, reason }; return }
+    if (previous?.stage === stage && now - previous.at < 5000) return
+    const state = { at: now, busy: true, stage }
+    observations.set(id, state)
+    void connection.invoke('ReportFileObservation', { transferId: id, stage, bytes, reason })
+      .catch(() => {}).finally(() => {
+        state.busy = false
+        if (observations.get(id) === state && state.next)
+          observe(id, state.next.stage, state.next.bytes, state.next.reason)
+      })
+  }
   const changes = new EventTarget()
   const conversationPages = new Map()
   const abort = new AbortController()
@@ -75,7 +93,12 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     releasePeer(id)
     pending.delete(current.clientTransferId)
     emit()
-    try { await action('FailFile', id) }
+    // Chỉ báo mã phân loại; không đưa message có thể chứa thông tin riêng tư lên dashboard.
+    const failureCode = /SHA-256/.test(error.message) ? 'HASH_MISMATCH'
+      : /Chunk|chunk/.test(error.message) ? 'INVALID_CHUNK'
+      : /WebRTC/.test(error.message) ? 'WEBRTC_FAILED'
+      : /30 giây|không tiến triển/.test(error.message) ? 'TRANSFER_TIMEOUT' : 'UNKNOWN'
+    try { await action('FailFile', id, { failureCode }) }
     catch { await load().catch(() => {}) }
   }
 
@@ -87,6 +110,7 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
   }
 
   function progress(id, bytes) {
+    observe(id, 'transferring', bytes)
     const peer = peers.get(id)
     const current = transfers.get(id)
     if (!peer || !current || !isFileActive(current)) return
@@ -127,6 +151,7 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     if (!peer || text !== '{"type":"end"}' || peer.verifying)
       throw new Error('Khung kết thúc không hợp lệ.')
     peer.verifying = true
+    observe(id, 'verifying')
     const blob = peer.receiver.finish()
     const verifiedSha256Hex = await sha256(await blob.arrayBuffer())
     if (peer.abort.signal.aborted || disposed) return
@@ -156,6 +181,7 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     channel.binaryType = 'arraybuffer'
     channel.bufferedAmountLowThreshold = BUFFER_LOW
     channel.onopen = () => {
+      observe(id, 'channel-open')
       peer.startedAt = performance.now()
       armTimeout(id)
       if (sending) void sendFile(id).catch(error => fail(id, error))
@@ -240,6 +266,7 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     if (transfer.status === 'accepted' && ownEndpoint && !previous?.localFailure)
       void startPeer(transfer)
     if (!isFileActive(transfer)) {
+      observations.delete(transfer.id)
       releasePeer(transfer.id)
       starting.delete(transfer.id)
       pending.delete(transfer.clientTransferId)
@@ -320,6 +347,7 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
   }
 
   function disconnected() {
+    observations.clear()
     for (const id of [...peers.keys()]) releasePeer(id)
     pending.clear()
     starting.clear()

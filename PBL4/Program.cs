@@ -54,7 +54,12 @@ namespace PBL4
                 tags: ["ready"], timeout: TimeSpan.FromSeconds(5));
             builder.Services.AddControllers();
             builder.Services.AddPbl4Auth(builder.Configuration, builder.Environment);
-            builder.Services.AddSignalR(options => options.AddFilter<RealtimeSessionFilter>());
+            builder.Services.AddSingleton<MonitoringService>();
+            builder.Services.AddHostedService<MonitoringArchiveWorker>();
+            builder.Services.AddSignalR(options => {
+                options.AddFilter<MonitoringService>();
+                options.AddFilter<RealtimeSessionFilter>();
+            });
             builder.Services.AddScoped<MessageService>();
             builder.Services.AddScoped<MessageReceiptService>();
             builder.Services.AddSingleton<FileTransferService>();
@@ -111,6 +116,40 @@ namespace PBL4
                 branch => branch.UseHttpsRedirection());
 
             app.UseRouting();
+
+            // Đo thời gian xử lý API bằng đồng hồ đơn điệu; loại dashboard để việc
+            // quan sát không làm sai biểu đồ tải. Route template tránh mỗi ID tạo một nhóm.
+            app.Use(async (context, next) =>
+            {
+                if (!context.Request.Path.StartsWithSegments("/api") ||
+                    context.Request.Path.StartsWithSegments("/api/v1/admin/monitoring"))
+                { await next(); return; }
+                var start = System.Diagnostics.Stopwatch.GetTimestamp();
+                var monitoring = context.RequestServices.GetRequiredService<MonitoringService>();
+                monitoring.EnterHttp();
+                var outcome = "ok";
+                var originalRequest = context.Request.Body;
+                var originalResponse = context.Response.Body;
+                var input = new MeasuredStream(originalRequest);
+                var output = new MeasuredStream(originalResponse);
+                context.Request.Body = input;
+                context.Response.Body = output;
+                try { await next(); }
+                catch (OperationCanceledException) { outcome = "cancelled"; throw; }
+                catch { outcome = "error"; throw; }
+                finally
+                {
+                    context.Request.Body = originalRequest;
+                    context.Response.Body = originalResponse;
+                    monitoring.LeaveHttp();
+                    if (context.Response.StatusCode >= 500) outcome = "error";
+                    else if (context.Response.StatusCode >= 400 && outcome == "ok") outcome = "rejected";
+                    var route = (context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "unmatched";
+                    context.RequestServices.GetRequiredService<MonitoringService>().Record("HTTP",
+                        context.Request.Method + " " + route,
+                        System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds, outcome, input.Bytes, output.Bytes);
+                }
+            });
 
             app.UseCors("AllowReactApp");
 

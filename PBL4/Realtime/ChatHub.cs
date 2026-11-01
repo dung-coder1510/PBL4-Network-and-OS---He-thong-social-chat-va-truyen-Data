@@ -22,6 +22,10 @@ public sealed class ChatHub(MessageService messages, MessageReceiptService recei
     private int CurrentUserId => int.Parse(Context.User!.FindFirstValue("sub")!,
         CultureInfo.InvariantCulture);
 
+    // Danh tính lấy từ JWT; service ràng buộc thêm connectionId với endpoint của phiên.
+    public Task ReportFileObservation(FileObservationDto request) =>
+        files.ReportAsync(CurrentUserId, Context.ConnectionId, request);
+
     // Luu SQL va giao tin qua SignalR cho cac tab cua hai tai khoan; tra tin da luu cho caller.
     // Day la duong gui mac dinh khi DataChannel chua san sang.
     public async Task<MessageDto> SendMessage(SendMessageDto request)

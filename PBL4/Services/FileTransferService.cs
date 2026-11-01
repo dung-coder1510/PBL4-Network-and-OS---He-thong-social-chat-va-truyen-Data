@@ -10,7 +10,7 @@ using PBL4.Realtime;
 namespace PBL4.Services;
 
 public sealed class FileTransferService(IServiceScopeFactory scopes,
-    IHubContext<ChatHub, IChatClient> hub, PresenceTracker presence)
+    IHubContext<ChatHub, IChatClient> hub, PresenceTracker presence, MonitoringService monitoring)
 {
     public const long MaximumFileBytes = 100 * 1024 * 1024;
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -27,6 +27,13 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
         public bool Answered { get; set; }
         public int SenderCandidates { get; set; }
         public int ReceiverCandidates { get; set; }
+        public DateTime LastSenderReport { get; set; }
+        public DateTime LastReceiverReport { get; set; }
+        public string? SenderStage { get; set; }
+        public string? ReceiverStage { get; set; }
+        public long Size { get; set; }
+        public long SenderBytes { get; set; }
+        public long ReceiverBytes { get; set; }
     }
 
     public async Task<FileTransferDto> OfferAsync(int userId, string connectionId, OfferFileDto request)
@@ -73,7 +80,7 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
             };
             db.FileTransfers.Add(transfer);
             await db.SaveChangesAsync();
-            var endpoints = new EndpointPair(userId, receiverId, connectionId);
+            var endpoints = new EndpointPair(userId, receiverId, connectionId) { Size = transfer.FileSizeBytes };
             active.Add(transfer.Id, endpoints);
             return await PublishAsync(transfer, endpoints);
         }
@@ -136,6 +143,11 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
                     transfer.Status = "cancelled";
                     break;
                 case "fail" when sender || receiver:
+                    // Chỉ lưu mã thuộc allowlist, không lưu thông báo lỗi tùy ý từ client.
+                    // Gắn nguồn báo cáo; đây là lời khai client, không phải chẩn đoán chắc chắn.
+                    var reason = request.FailureCode is "HASH_MISMATCH" or "WEBRTC_FAILED" or "TRANSFER_TIMEOUT" or "INVALID_CHUNK"
+                        ? request.FailureCode : "UNKNOWN";
+                    monitoring.File(request.TransferId, sender ? "client-A" : "client-B", "failure-report", reason: reason);
                     transfer.Status = "failed";
                     break;
                 default: throw new HubException("Thao tác không phù hợp trạng thái phiên truyền.");
@@ -145,6 +157,37 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
             await db.SaveChangesAsync();
             if (transfer.FinishedAt.HasValue) active.Remove(id);
             return await PublishAsync(transfer, endpoints);
+        }
+        finally { gate.Release(); }
+    }
+
+    // Telemetry không thay đổi trạng thái nghiệp vụ. Giới hạn 1 mẫu/5 giây mỗi đầu,
+    // kiểm tra đúng tài khoản/tab và phiên còn hoạt động trước khi nhận báo cáo.
+    public async Task ReportAsync(int userId, string connectionId, FileObservationDto report)
+    {
+        var id = ParseId(report.TransferId);
+        if (report.Stage is not ("channel-open" or "transferring" or "verifying" or "failed") ||
+            report.Bytes < 0 || report.Bytes > MaximumFileBytes ||
+            report.Reason is not (null or "UNKNOWN" or "HASH_MISMATCH" or "WEBRTC_FAILED" or "TRANSFER_TIMEOUT" or "INVALID_CHUNK"))
+            throw new HubException("Báo cáo không hợp lệ.");
+        await gate.WaitAsync();
+        try
+        {
+            if (!active.TryGetValue(id, out var pair)) return;
+            var sender = pair.SenderId == userId && pair.Sender == connectionId;
+            var receiver = pair.ReceiverId == userId && pair.Receiver == connectionId;
+            if (!sender && !receiver) throw new HubException("Báo cáo thuộc tab khác.");
+            var now = DateTime.UtcNow;
+            if (pair.Deadline <= now || report.Bytes > pair.Size ||
+                report.Bytes < (sender ? pair.SenderBytes : pair.ReceiverBytes)) return;
+            static int Rank(string? stage) => stage switch { "channel-open" => 1, "transferring" => 2, "verifying" => 3, "failed" => 4, _ => 0 };
+            var previousStage = sender ? pair.SenderStage : pair.ReceiverStage;
+            if (Rank(report.Stage) < Rank(previousStage) || sender && report.Stage == "verifying") return;
+            // Đổi giai đoạn được báo ngay; mẫu tiến độ cùng giai đoạn tối đa mỗi 5 giây.
+            if (report.Stage == previousStage && now - (sender ? pair.LastSenderReport : pair.LastReceiverReport) < TimeSpan.FromSeconds(5)) return;
+            if (sender) { pair.LastSenderReport = now; pair.SenderStage = report.Stage; pair.SenderBytes = report.Bytes ?? pair.SenderBytes; }
+            else { pair.LastReceiverReport = now; pair.ReceiverStage = report.Stage; pair.ReceiverBytes = report.Bytes ?? pair.ReceiverBytes; }
+            monitoring.File(report.TransferId, sender ? "client-A" : "client-B", report.Stage, report.Bytes, report.Reason);
         }
         finally { gate.Release(); }
     }
@@ -189,6 +232,7 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
             }
             else throw new HubException("Thứ tự báo hiệu không hợp lệ.");
             await hub.Clients.Client(sender ? endpoints.Receiver : endpoints.Sender).FileSignal(signal);
+            if (signal.Kind != "ice") monitoring.File(signal.TransferId, "backend", signal.Kind);
         }
         finally { gate.Release(); }
     }
@@ -228,6 +272,11 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
                     connected.Contains(endpoints.Sender) &&
                     (endpoints.Receiver is null || connected.Contains(endpoints.Receiver)) &&
                     !disabled.Contains(transfer.SenderId) && !disabled.Contains(receiverId)) continue;
+                var failureReason = endpoints is null ? "SERVER_STATE_LOST"
+                    : disabled.Contains(transfer.SenderId) || disabled.Contains(receiverId) ? "ACCOUNT_DISABLED"
+                    : endpoints.Deadline <= DateTime.UtcNow ? (transfer.Status == "offered" ? "OFFER_TIMEOUT" : "TRANSFER_TIMEOUT")
+                    : "ENDPOINT_DISCONNECTED";
+                monitoring.File(transfer.Id.ToString(CultureInfo.InvariantCulture), "backend", "failure-report", reason: failureReason);
                 transfer.Status = transfer.Status == "offered" ? "expired" : "failed";
                 transfer.FinishedAt = DateTime.UtcNow;
                 await db.SaveChangesAsync();
@@ -264,6 +313,7 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
     private async Task<FileTransferDto> PublishAsync(FileTransfer transfer, EndpointPair endpoints)
     {
         var dto = ToDto(transfer, endpoints.ReceiverId, endpoints);
+        monitoring.File(dto.Id, "backend", dto.Status, reason: dto.Status == "failed" ? "UNKNOWN" : null);
         var connections = presence.GetValidConnectionIds([endpoints.SenderId, endpoints.ReceiverId]);
         if (connections.Count > 0) await hub.Clients.Clients(connections).FileChanged(dto);
         return dto;

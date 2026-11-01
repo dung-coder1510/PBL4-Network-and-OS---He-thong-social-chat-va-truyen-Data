@@ -9,6 +9,7 @@ import { authApi } from './services/authApi.js'
 import { ChatRealtimeProvider } from './realtime/ChatRealtimeProvider.jsx'
 import { FileTransferProvider } from './realtime/FileTransferProvider.jsx'
 import FilesPage from './pages/FilesPage.jsx'
+import MonitoringPage from './pages/MonitoringPage.jsx'
 import './styles/app.css'
 
 const PAGES = new Set(['chat', 'contacts', 'calls', 'files', 'admin', 'settings'])
@@ -131,6 +132,8 @@ function App() {
               onSessionExpired={sessionExpired} />
           : visiblePage === 'files'
           ? <FilesPage token={session.accessToken} user={session.user} onSessionExpired={sessionExpired} />
+          : visiblePage === 'admin'
+          ? <MonitoringPage token={session.accessToken} />
           : <EmptyWorkspacePage page={visiblePage} user={session.user} />}
       </AppShell>
       </FileTransferProvider>

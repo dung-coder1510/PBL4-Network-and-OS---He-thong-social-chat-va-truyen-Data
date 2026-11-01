@@ -1,8 +1,10 @@
 namespace PBL4.Contracts;
 
+public sealed record FileObservationDto(string TransferId, string Stage, long? Bytes, string? Reason);
+
 public sealed record OfferFileDto(string ConversationId, Guid ClientTransferId,
     string FileName, long FileSizeBytes, string Sha256Hex);
-public sealed record FileActionDto(string TransferId, string ExpectedVersion);
+public sealed record FileActionDto(string TransferId, string ExpectedVersion, string? FailureCode = null);
 public sealed record CompleteFileDto(string TransferId, string ExpectedVersion,
     long ReceivedBytes, string VerifiedSha256Hex);
 public sealed record FileSignalDto(string TransferId, string Kind, string Payload);
