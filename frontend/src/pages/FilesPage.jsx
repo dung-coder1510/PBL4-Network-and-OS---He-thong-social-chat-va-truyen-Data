@@ -14,11 +14,13 @@ const size = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024
 
 export default function FilesPage({ token, user, onSessionExpired }) {
   const files = useFileTransfers()
-  const { reconnect } = useChatRealtime()
+  const { reconnect, subscribeSync } = useChatRealtime()
   const [conversations, setConversations] = useState([])
   const [conversationId, setConversationId] = useState('')
   const [selectedFile, setSelectedFile] = useState(null)
   const [busy, setBusy] = useState('')
+  const [revision, setRevision] = useState(0)
+  useEffect(() => subscribeSync(() => setRevision(value => value + 1)), [subscribeSync])
   const [error, setError] = useState('')
   const [selectionKey, setSelectionKey] = useState(0)
 
@@ -40,7 +42,7 @@ export default function FilesPage({ token, user, onSessionExpired }) {
       else setError(failure.message)
     })
     return () => controller.abort()
-  }, [token, onSessionExpired])
+  }, [token, onSessionExpired, revision])
 
   async function perform(key, operation) {
     setBusy(key)

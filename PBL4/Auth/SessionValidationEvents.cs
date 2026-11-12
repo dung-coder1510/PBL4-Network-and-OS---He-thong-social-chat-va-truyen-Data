@@ -29,7 +29,8 @@ public sealed class SessionValidationEvents(AppDbContext db, SessionRegistry ses
 
         var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(u => u.Id == userId,
             context.HttpContext.RequestAborted);
-        if (user is null || user.IsDisabled)
+        if (user is null || user.IsDisabled ||
+            !int.TryParse(context.Principal?.FindFirstValue("ver"), out var version) || version != user.SessionVersion)
         {
             sessions.Revoke(sid);
             context.Fail("Account is unavailable.");

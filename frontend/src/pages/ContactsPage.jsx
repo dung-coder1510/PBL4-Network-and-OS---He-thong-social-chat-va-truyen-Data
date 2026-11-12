@@ -14,11 +14,13 @@ function activityLabel(user) {
 }
 
 export default function ContactsPage({ token, onSessionExpired, onOpenConversation }) {
-  const { connection } = useChatRealtime()
+  const { connection, subscribeSync } = useChatRealtime()
   const [contacts, setContacts] = useState([])
   const [filter, setFilter] = useState('all')
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(true)
+  const [revision, setRevision] = useState(0)
+  useEffect(() => subscribeSync(() => setRevision(value => value + 1)), [subscribeSync])
   const [error, setError] = useState('')
   const [showAdd, setShowAdd] = useState(false)
   const [editingId, setEditingId] = useState(null)
@@ -35,7 +37,7 @@ export default function ContactsPage({ token, onSessionExpired, onOpenConversati
       if (!controller.signal.aborted) setLoading(false)
     })
     return () => controller.abort()
-  }, [token, onSessionExpired])
+  }, [token, onSessionExpired, revision])
 
   useEffect(() => {
     if (!connection) return undefined

@@ -153,6 +153,10 @@ export function ChatRealtimeProvider({ token, user, onSessionExpired, children }
     })
     textTransport.current = manager
     const peerRefresh = setInterval(() => manager.refresh(), 15000)
+    const unavailable = () => { if (!disposed) onSessionExpired() }
+    const availabilityChanged = () => { if (!disposed) notifySync(true) }
+    activeConnection.on('AccountUnavailable', unavailable)
+    activeConnection.on('AccountAvailabilityChanged', availabilityChanged)
     const removeMessageListener = listenForMessages(activeConnection, message => manager.receiveServer(message))
     const removeConversationListener = listenForConversationChanges(activeConnection, () => notifySync())
     startChatConnection(activeConnection).then(async () => {
@@ -177,6 +181,8 @@ export function ChatRealtimeProvider({ token, user, onSessionExpired, children }
       window.removeEventListener('focus', resumeHeartbeat)
       window.removeEventListener('online', networkOnline)
       controller.abort()
+      activeConnection.off('AccountUnavailable', unavailable)
+      activeConnection.off('AccountAvailabilityChanged', availabilityChanged)
       removeMessageListener()
       removeConversationListener()
       void stopChatConnection(activeConnection)

@@ -61,6 +61,8 @@ namespace PBL4
                 options.AddFilter<RealtimeSessionFilter>();
             });
             builder.Services.AddScoped<MessageService>();
+            builder.Services.AddScoped<AdminService>();
+            builder.Services.AddSingleton<UserAccessLock>();
             builder.Services.AddScoped<MessageReceiptService>();
             builder.Services.AddSingleton<FileTransferService>();
             builder.Services.AddSingleton<TextPeerSessionService>();
@@ -153,8 +155,8 @@ namespace PBL4
 
             app.UseCors("AllowReactApp");
 
-            app.UseRateLimiter();
             app.UseAuthentication();
+            app.UseRateLimiter();
             app.UseAuthorization();
 
             // Cho phep probe khong can JWT; chi tra trang thai, khong tra loi SQL hay cau hinh.

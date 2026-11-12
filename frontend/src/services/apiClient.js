@@ -26,6 +26,7 @@ export async function request(path, { method = 'GET', body, token, signal } = {}
     const validation = data?.errors && Object.values(data.errors).flat()[0]
     throw Object.assign(new Error(validation || data?.detail || data?.title || 'Máy chủ chưa sẵn sàng. Vui lòng thử lại.'), {
       status: response.status, code: data?.code,
+      retryAfterMs: Math.max(0, Number(response.headers.get('Retry-After')) || 0) * 1000,
     })
   }
   if (!data) throw new Error('Phản hồi từ máy chủ không hợp lệ.')

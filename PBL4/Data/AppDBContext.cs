@@ -28,6 +28,7 @@ namespace PBL4.Data
                 entity.Property(e => e.Username).UseCollation("Latin1_General_100_CI_AS");
                 entity.Property(e => e.Role).HasColumnType("VARCHAR(10)").HasDefaultValue("User");
                 entity.Property(e => e.IsDisabled).HasDefaultValue(false);
+                entity.Property(e => e.SessionVersion).HasDefaultValue(0);
                 entity.Property(e => e.CreatedAt).HasColumnType("DATETIME2(3)").HasDefaultValueSql("SYSUTCDATETIME()");
                 entity.Property(e => e.LastSeenAt).HasColumnType("DATETIME2(3)");
                 entity.Property(e => e.RowVersion).IsRowVersion();

@@ -4,10 +4,11 @@ namespace PBL4.Services;
 
 // Lưu snapshot hữu hạn theo lô 30 giây, không ghi SQL cho mỗi heartbeat/chunk.
 // Dữ liệu kết nối sống không được khôi phục sau restart. Telemetry lỗi không dừng chat.
-public sealed class MonitoringArchiveWorker(MonitoringService monitoring, IWebHostEnvironment environment,
+public sealed class MonitoringArchiveWorker(MonitoringService monitoring, IConfiguration configuration,
     ILogger<MonitoringArchiveWorker> logger) : BackgroundService
 {
-    private string DirectoryPath => Path.Combine(environment.ContentRootPath, "App_Data", "monitoring");
+    private string DirectoryPath => configuration["Monitoring:ArchiveDirectory"] ??
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PBL4", "monitoring");
     private string ArchivePath => Path.Combine(DirectoryPath, "snapshot.json");
     public override async Task StartAsync(CancellationToken ct)
     {

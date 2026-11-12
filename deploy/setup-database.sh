@@ -58,6 +58,8 @@ IF EXISTS (
 ) THROW 53000, 'PBL4 is missing required tables. No schema is imported automatically.', 1;
 IF COL_LENGTH('dbo.Users', 'AvatarPath') IS NULL
     THROW 53001, 'Users.AvatarPath is missing. Review the schema migration first.', 1;
+IF COL_LENGTH('dbo.Users', 'SessionVersion') IS NULL
+    THROW 53002, 'Users.SessionVersion is missing. Apply database/migrations/002_admin_session_version.sql first.', 1;
 IF SUSER_ID(N'pbl4_backend') IS NULL
     CREATE LOGIN [pbl4_backend] WITH PASSWORD = '$db_password', CHECK_POLICY = ON, CHECK_EXPIRATION = OFF;
 IF USER_ID(N'pbl4_backend') IS NULL

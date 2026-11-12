@@ -56,6 +56,18 @@ public sealed class PresenceService(IServiceScopeFactory scopes, PresenceTracker
         }
     }
 
+    public async Task RevokeUserAsync(int userId, CancellationToken ct)
+    {
+        await transitions.WaitAsync(ct);
+        try
+        {
+            if (tracker.RevokeUser(userId))
+                pendingChanges[userId] = new PresenceDto(userId, false, DateTime.UtcNow);
+            await PublishPendingAsync(ct);
+        }
+        finally { transitions.Release(); }
+    }
+
     private async Task NotifyAsync(int userId, bool isOnline, DateTime? lastSeenAt,
         CancellationToken ct)
     {

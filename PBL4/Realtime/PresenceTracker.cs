@@ -95,6 +95,16 @@ public sealed class PresenceTracker(SessionRegistry sessions, TimeProvider clock
         }
     }
 
+    public IReadOnlyList<int> GetOnlineUserIds()
+    {
+        lock (gate) return connections.Where(x => HasRecentHeartbeat(x.Key, x.Value)).Select(x => x.Key).ToArray();
+    }
+
+    public bool RevokeUser(int userId)
+    {
+        lock (gate) { connections.Remove(userId); return onlineUsers.Remove(userId); }
+    }
+
     public IReadOnlyList<int> CheckTimeouts()
     {
         lock (gate)

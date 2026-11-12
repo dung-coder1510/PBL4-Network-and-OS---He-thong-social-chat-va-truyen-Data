@@ -43,6 +43,7 @@ public sealed class TokenService
         {
             new Claim("sub", user.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)),
             new Claim("sid", sid),
+            new Claim("ver", user.SessionVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)),
             new Claim("role", user.Role),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N"))
         };

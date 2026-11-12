@@ -16,7 +16,8 @@ public sealed class RealtimeSessionFilter(SessionRegistry sessions, AppDbContext
         var sub = principal?.FindFirstValue("sub");
         if (!int.TryParse(sub, out var userId) || sid is null ||
             !sessions.IsValid(sid, userId) ||
-            !await db.Users.AsNoTracking().AnyAsync(u => u.Id == userId && !u.IsDisabled,
+            !int.TryParse(principal?.FindFirstValue("ver"), out var version) ||
+            !await db.Users.AsNoTracking().AnyAsync(u => u.Id == userId && !u.IsDisabled && u.SessionVersion == version,
                 invocationContext.Context.ConnectionAborted))
         {
             invocationContext.Context.Abort();

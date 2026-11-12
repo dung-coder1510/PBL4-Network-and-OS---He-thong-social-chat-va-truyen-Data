@@ -38,6 +38,7 @@ CREATE TABLE dbo.Users
     CreatedAt DATETIME2(3) NOT NULL CONSTRAINT DF_Users_CreatedAt DEFAULT SYSUTCDATETIME(),
     LastSeenAt DATETIME2(3) NULL,
     IsDisabled BIT NOT NULL CONSTRAINT DF_Users_IsDisabled DEFAULT 0,
+    SessionVersion INT NOT NULL CONSTRAINT DF_Users_SessionVersion DEFAULT 0,
     RowVersion ROWVERSION NOT NULL,
     CONSTRAINT UQ_Users_Username UNIQUE (Username),
     CONSTRAINT CK_Users_Role CHECK

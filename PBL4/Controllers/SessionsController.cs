@@ -14,7 +14,7 @@ namespace PBL4.Controllers;
 [ApiController]
 [Route("api/v1/sessions")]
 public sealed class SessionsController(AppDbContext db, PasswordService passwords,
-    TokenService tokens, SessionRegistry sessions, PresenceService presence) : ControllerBase
+    TokenService tokens, SessionRegistry sessions, PresenceService presence, UserAccessLock access) : ControllerBase
 {
     /// <summary>Kiểm tra mật khẩu, cấp JWT 30 phút; không phân biệt user sai/password sai.</summary>
     [HttpPost, AllowAnonymous, EnableRateLimiting("auth")]
@@ -22,7 +22,9 @@ public sealed class SessionsController(AppDbContext db, PasswordService password
     public async Task<ActionResult<AuthSessionDto>> Create(CreateSessionDto request, CancellationToken ct)
     {
         var username = request.Username.Trim().ToLowerInvariant();
-        var user = await db.Users.SingleOrDefaultAsync(u => u.Username == username, ct);
+        var candidate = await db.Users.AsNoTracking().SingleOrDefaultAsync(u => u.Username == username, ct);
+        using var lease = candidate is null ? null : await access.AcquireAsync(candidate.Id, ct);
+        var user = candidate is null ? null : await db.Users.SingleOrDefaultAsync(u => u.Id == candidate.Id, ct);
         var verified = passwords.Verify(user, request.Password);
         if (user is null || verified == PasswordVerificationResult.Failed)
             return Problem(statusCode: 401, title: "Tên đăng nhập hoặc mật khẩu không đúng.",

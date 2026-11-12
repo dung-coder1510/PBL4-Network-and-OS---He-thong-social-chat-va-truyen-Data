@@ -45,6 +45,17 @@ public sealed class MonitoringService : IHubFilter
     public record Sample(DateTime At, string Kind, string Operation, double Milliseconds, string Outcome, long? InBytes, long? OutBytes);
     public record Link(string Id, string? UserId, DateTime ConnectedAt, DateTime LastSeenAt,
         DateTime? LastHeartbeatAt = null, long LastReportTimestamp = 0, int ReportCount = 0);
+    public record UserConnections(int UserId, Link[] Connections, int Total, DateTime UpdatedAt);
+
+    public UserConnections ConnectionsFor(int userId)
+    {
+        lock (gate)
+        {
+            var matches = links.Values.Where(link => link.UserId == userId.ToString())
+                .OrderByDescending(link => link.ConnectedAt).ToArray();
+            return new(userId, matches.Take(500).ToArray(), matches.Length, DateTime.UtcNow);
+        }
+    }
 
     // Giới hạn cả tuổi mẫu và số mẫu để lưu lượng tăng không làm bộ nhớ tăng vô hạn.
     public void Record(string kind, string operation, double milliseconds, string outcome, long? inBytes = null, long? outBytes = null)
@@ -99,21 +110,21 @@ public sealed class MonitoringService : IHubFilter
     {
         var start = Stopwatch.GetTimestamp();
         var outcome = "ok";
-        lock (gate)
-            if (links.TryGetValue(context.Context.ConnectionId, out var link))
-            {
-                // Chặn báo cáo liên tục trước khi chạm semaphore của dịch vụ file.
-                var reporting = context.HubMethodName == "ReportFileObservation";
-                var sameWindow = link.LastReportTimestamp != 0 && Stopwatch.GetElapsedTime(link.LastReportTimestamp).TotalSeconds < 5;
-                if (reporting && sameWindow && link.ReportCount >= 8) throw new HubException("Báo cáo quá thường xuyên.");
-                links[link.Id] = link with { LastSeenAt = DateTime.UtcNow,
-                    LastReportTimestamp = reporting && !sameWindow ? start : link.LastReportTimestamp,
-                    ReportCount = reporting ? (sameWindow ? link.ReportCount + 1 : 1) : link.ReportCount };
-            }
         long? input = null, output = null;
         Interlocked.Increment(ref activeHub);
         try
         {
+            lock (gate)
+                if (links.TryGetValue(context.Context.ConnectionId, out var link))
+                {
+                    // Chặn báo cáo liên tục trước khi chạm semaphore của dịch vụ file.
+                    var reporting = context.HubMethodName == "ReportFileObservation";
+                    var sameWindow = link.LastReportTimestamp != 0 && Stopwatch.GetElapsedTime(link.LastReportTimestamp).TotalSeconds < 5;
+                    if (reporting && sameWindow && link.ReportCount >= 8) throw new HubException("Báo cáo quá thường xuyên.");
+                    links[link.Id] = link with { LastSeenAt = DateTime.UtcNow,
+                        LastReportTimestamp = reporting && !sameWindow ? start : link.LastReportTimestamp,
+                        ReportCount = reporting ? (sameWindow ? link.ReportCount + 1 : 1) : link.ReportCount };
+                }
             input = Estimate(context.HubMethodArguments);
             var result = await next(context);
             output = Estimate(result);

@@ -36,6 +36,9 @@ namespace PBL4.Models
 
         public bool IsDisabled { get; set; } //[cite: 4]
 
+        // A disabled account's previous JWTs stay invalid after it is enabled again.
+        public int SessionVersion { get; set; }
+
         public DateTime CreatedAt { get; set; } //[cite: 4]
 
         public DateTime? LastSeenAt { get; set; } //[cite: 4]

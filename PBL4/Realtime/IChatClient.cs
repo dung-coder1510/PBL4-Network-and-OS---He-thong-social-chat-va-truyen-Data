@@ -4,6 +4,8 @@ namespace PBL4.Realtime;
 
 public interface IChatClient
 {
+    Task AccountUnavailable();
+    Task AccountAvailabilityChanged();
     // Bao conversation moi/thay doi de client tai lai danh sach va thong tin lien quan.
     Task ConversationChanged(ConversationSubscriptionDto conversation);
     // Giao tin SQL chuan qua SignalR, gom duong cu, fallback va dong bo tab phu.

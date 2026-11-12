@@ -9,7 +9,7 @@ import { authApi } from './services/authApi.js'
 import { ChatRealtimeProvider } from './realtime/ChatRealtimeProvider.jsx'
 import { FileTransferProvider } from './realtime/FileTransferProvider.jsx'
 import FilesPage from './pages/FilesPage.jsx'
-import MonitoringPage from './pages/MonitoringPage.jsx'
+import AdminPage from './pages/AdminPage.jsx'
 import './styles/app.css'
 
 const PAGES = new Set(['chat', 'contacts', 'calls', 'files', 'admin', 'settings'])
@@ -26,6 +26,16 @@ function App() {
     setSession(null)
     setNotice('Phiên đăng nhập đã hết hạn hoặc bị thu hồi. Bạn đăng nhập lại nhé.')
   }, [])
+  const adminAccessLost = useCallback(async () => {
+    if (!session) return
+    try {
+      const user = await authApi.getMe(session.accessToken)
+      setSession(current => current?.sessionId === session.sessionId ? { ...current, user } : current)
+      if (user.role !== 'Admin') { setPage('chat'); window.location.hash = 'chat' }
+    } catch (error) {
+      if (error.status === 401) sessionExpired()
+    }
+  }, [session, sessionExpired])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -133,7 +143,7 @@ function App() {
           : visiblePage === 'files'
           ? <FilesPage token={session.accessToken} user={session.user} onSessionExpired={sessionExpired} />
           : visiblePage === 'admin'
-          ? <MonitoringPage token={session.accessToken} />
+          ? <AdminPage token={session.accessToken} onSessionExpired={sessionExpired} onAccessLost={adminAccessLost} />
           : <EmptyWorkspacePage page={visiblePage} user={session.user} />}
       </AppShell>
       </FileTransferProvider>

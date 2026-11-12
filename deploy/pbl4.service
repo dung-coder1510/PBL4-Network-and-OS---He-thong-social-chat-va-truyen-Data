@@ -10,6 +10,8 @@ Group=pbl4
 WorkingDirectory=/opt/pbl4/current/backend
 ExecStart=/usr/bin/dotnet /opt/pbl4/current/backend/PBL4.dll
 EnvironmentFile=/etc/pbl4/pbl4.env
+StateDirectory=pbl4
+Environment=Monitoring__ArchiveDirectory=/var/lib/pbl4/monitoring
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30

@@ -22,6 +22,12 @@ public sealed class SessionRegistry : IDisposable
         entry is not null && entry.UserId == userId && entry.ExpiresAt > DateTimeOffset.UtcNow;
 
     public void Revoke(string id) => sessions.Remove(id);
+    public void RevokeAll(int userId)
+    {
+        foreach (var id in sessions.Keys.ToArray())
+            if (sessions.TryGetValue<Entry>(id, out var entry) && entry?.UserId == userId)
+                sessions.Remove(id);
+    }
     public void Dispose() => sessions.Dispose();
 }
 
