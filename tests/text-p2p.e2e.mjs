@@ -172,7 +172,7 @@ try {
   const fileName = 'text-parallel-' + randomUUID() + '.bin'
   await a.locator('input[type=file]').setInputFiles({ name: fileName, mimeType: 'application/octet-stream', buffer: fileBytes })
   const fileRow = b.locator('tr').filter({ hasText: fileName })
-  await fileRow.getByRole('button', { name: 'Chấp nhận', exact: true }).click()
+  await fileRow.getByRole('button', { name: 'Nhận để tải xuống', exact: true }).click()
   const duringFile = 'text-during-file-' + randomUUID()
   await send(a, duringFile)
   await fileRow.getByRole('link', { name: 'Tải xuống', exact: true }).waitFor({ timeout: 20000 })

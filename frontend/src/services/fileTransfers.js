@@ -1,8 +1,11 @@
 import { request } from './apiClient.js'
 import { waitForTransferring } from './fileTransferState.js'
 import {
-  BUFFER_LOW, CHUNK_BYTES, MAX_FILE_BYTES, createFileReceiver, encodeChunk, sha256, waitForBuffer,
+  BUFFER_LOW, CHUNK_BYTES, LARGE_FILE_WARNING_BYTES, LEGACY_MAX_FILE_BYTES, MAX_FILE_BYTES,
+  createFileReceiver, encodeChunk, sha256, waitForBuffer,
 } from './fileProtocol.js'
+import { createStreamReceiver, createStreamSender, hashFile, readStreamControl, streamControl, streamHeaderBytes } from './fileStreamProtocol.js'
+import { canSaveFile, createFileStorage, pickFileDestination } from './fileStorage.js'
 
 export const isFileActive = transfer => !!transfer && ['offered', 'accepted', 'transferring'].includes(transfer.status)
 
@@ -10,12 +13,14 @@ function versionNumber(version) {
   return [...atob(version)].reduce((value, character) => (value << 8n) + BigInt(character.charCodeAt(0)), 0n)
 }
 
-export function createFileTransfers({ connection, token, userId, onChange, onNotice }) {
+export function createFileTransfers({ connection, token, userId, onChange, onNotice, confirmLargeFile }) {
   const transfers = new Map()
   const pending = new Map()
   const peers = new Map()
   const downloads = new Map()
   const starting = new Map()
+  const receiving = new Map()
+  const accepting = new Set()
   const observations = new Map()
   // Báo cáo giám sát không chặn truyền file. Giới hạn cả tần suất và request đang chờ;
   // không gửi exception thô, SDP hoặc nội dung file. Backend xác thực endpoint độc lập.
@@ -54,6 +59,10 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     .catch(error => { configuration = null; throw error })
 
   function releasePeer(id) {
+    const storage = receiving.get(id)
+    receiving.delete(id)
+    storage?.abort.abort()
+    void storage?.disk?.dispose()
     const peer = peers.get(id)
     if (!peer) return
     peers.delete(id)
@@ -71,14 +80,9 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     peer.pc.close()
   }
 
-  async function action(method, id, extra = {}) {
+  async function invokeAction(method, id, extra = {}) {
     const current = transfers.get(id)
     if (!current || disposed) throw new Error('Phiên truyền không còn khả dụng.')
-    if (method === 'AcceptFile') {
-      if (!globalThis.RTCPeerConnection || !globalThis.crypto?.subtle)
-        throw new Error('Nhận tệp cần WebRTC và HTTPS hoặc localhost.')
-      await config()
-    }
     const result = await connection.invoke(method, {
       transferId: id, expectedVersion: current.version, ...extra,
     })
@@ -86,9 +90,47 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     return result
   }
 
+  async function action(method, id, extra = {}) {
+    if (method !== 'AcceptFile') return invokeAction(method, id, extra)
+    if (accepting.has(id)) return
+    if (!globalThis.RTCPeerConnection || !globalThis.crypto?.subtle)
+      throw new Error('Nhận tệp cần WebRTC và HTTPS hoặc localhost.')
+    const offered = transfers.get(id)
+    if (!offered || offered.status !== 'offered') throw new Error('Lời mời không còn hiệu lực.')
+    if (!Number.isSafeInteger(offered.fileSizeBytes) || offered.fileSizeBytes < 0 || offered.fileSizeBytes > MAX_FILE_BYTES)
+      throw new Error('Chỉ nhận tệp tối đa 10 GiB.')
+    if (offered.fileSizeBytes > LEGACY_MAX_FILE_BYTES &&
+        (extra.legacy || !canSaveFile(offered) || !offered.supportedProtocols.includes('file-v3')))
+      throw new Error('Tệp lớn cần phiên bản ứng dụng mới, trình duyệt hỗ trợ lưu trực tiếp và HTTPS hoặc localhost.')
+    accepting.add(id)
+    const storage = { abort: new AbortController(), disk: null }
+    receiving.set(id, storage)
+    try {
+      let protocolVersion = 'file-v1'
+      if (!extra.legacy && canSaveFile(offered)) {
+        // Gọi picker trước await mạng để giữ user activation từ nút Nhận file.
+        const target = await pickFileDestination(offered.fileName)
+        storage.abort.signal.throwIfAborted()
+        storage.disk = await createFileStorage(target, storage.abort.signal, offered.fileSizeBytes)
+        protocolVersion = offered.supportedProtocols.includes('file-v3') ? 'file-v3' : 'file-v2'
+      }
+      await config()
+      storage.abort.signal.throwIfAborted()
+      const current = transfers.get(id)
+      if (disposed || current?.status !== 'offered') throw new Error('Lời mời không còn hiệu lực.')
+      return await invokeAction(method, id, { protocolVersion, channelCount: 1 })
+    } catch (error) {
+      // Một broadcast accepted có thể đến trước lỗi mất phản hồi của invocation.
+      if (peers.has(id) && transfers.get(id)?.receiverConnectionId === connection.connectionId)
+        return transfers.get(id)
+      releasePeer(id)
+      if (error.name !== 'AbortError') throw error
+    } finally { accepting.delete(id) }
+  }
+
   async function fail(id, error) {
     const current = transfers.get(id)
-    if (!current || !isFileActive(current) || disposed || current.localFailure) return
+    if (!current || !isFileActive(current) || disposed || current.localFailure || current.savedLocally) return
     transfers.set(id, { ...current, localFailure: true, error: error.message || 'Truyền tệp thất bại.' })
     releasePeer(id)
     pending.delete(current.clientTransferId)
@@ -133,6 +175,11 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     const current = transfers.get(id)
     const file = pending.get(current.clientTransferId)
     if (!file) throw new Error('Tệp gốc không còn ở tab gửi. Hãy gửi lại.')
+    if (peer.streaming) {
+      await peer.sender.send(file, () => action('BeginFileTransfer', id))
+      armTimeout(id, 30 * 60 * 1000)
+      return
+    }
     await action('BeginFileTransfer', id)
     for (let offset = 0, index = 0; offset < file.size; offset += CHUNK_BYTES, index++) {
       await waitForBuffer(peer.channel, peer.abort.signal)
@@ -169,9 +216,48 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     onNotice(`Đã nhận và kiểm tra SHA-256: ${completed.fileName}`)
   }
 
+  function phase(id, localPhase) {
+    const current = transfers.get(id)
+    if (!current || disposed) return
+    transfers.set(id, { ...current, localPhase })
+    emit()
+  }
+
+  async function receiveStreamEnd(id) {
+    const peer = peers.get(id)
+    if (!peer || peer.verifying) throw new Error('Khung END lặp.')
+    peer.verifying = true
+    await peer.streamReceiver.finish()
+    phase(id, 'verifying')
+    observe(id, 'verifying')
+    const file = await peer.disk.finish()
+    const verifiedSha256Hex = await hashFile(file, peer.abort.signal, () => armTimeout(id))
+    await waitForTransferring(() => transfers.get(id), changes, peer.abort.signal)
+    const current = transfers.get(id)
+    if (file.size !== current.fileSizeBytes || verifiedSha256Hex !== current.sha256Hex)
+      throw new Error('SHA-256 không khớp; tệp đã bị loại bỏ.')
+    phase(id, 'saving')
+    await peer.disk.save(file, () => armTimeout(id), savedName => {
+      transfers.set(id, { ...transfers.get(id), savedLocally: true, savedName,
+        localFailure: false, error: '', localPhase: 'saved', transferredBytes: file.size })
+      emit()
+    })
+    clearTimeout(peer.timeout)
+    try {
+      if (!disposed && connection.state === 'Connected')
+        await action('CompleteFile', id, { receivedBytes: file.size, verifiedSha256Hex })
+    } catch {
+      await load().catch(() => {})
+    } finally {
+      releasePeer(id)
+      emit()
+    }
+    if (!disposed) onNotice(`Đã lưu trên máy: ${transfers.get(id).savedName}`)
+  }
+
   function attachChannel(id, channel, sending) {
     const peer = peers.get(id)
-    if (!peer || peer.channel || channel.label !== 'file-v1' || !channel.ordered ||
+    if (!peer || peer.channel || channel.label !== (peer.streaming ? `${peer.protocolVersion}-0` : 'file-v1') || !channel.ordered ||
         channel.maxRetransmits !== null || channel.maxPacketLifeTime !== null) {
       channel.close()
       void fail(id, new Error('Kênh dữ liệu không hợp lệ.'))
@@ -180,13 +266,40 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     peer.channel = channel
     channel.binaryType = 'arraybuffer'
     channel.bufferedAmountLowThreshold = BUFFER_LOW
+    if (peer.streaming && sending) peer.sender = createStreamSender({
+      channel, transferId: id, signal: peer.abort.signal, protocolVersion: peer.protocolVersion, onProgress: bytes => progress(id, bytes),
+    })
+    if (peer.streaming && !sending) peer.streamReceiver = createStreamReceiver({
+      size: transfers.get(id).fileSizeBytes, signal: peer.abort.signal, protocolVersion: peer.protocolVersion,
+      write: (offset, data) => peer.disk.write(offset, data),
+      acknowledge: bytes => channel.send(streamControl('ACK', id, bytes)),
+      onProgress: bytes => progress(id, bytes),
+    })
     channel.onopen = () => {
       observe(id, 'channel-open')
       peer.startedAt = performance.now()
       armTimeout(id)
+      if (peer.streaming && peer.pc.sctp?.maxMessageSize < CHUNK_BYTES + streamHeaderBytes(peer.protocolVersion)) {
+        void fail(id, new Error('WebRTC không hỗ trợ kích thước khung truyền.'))
+        return
+      }
       if (sending) void sendFile(id).catch(error => fail(id, error))
+      else if (peer.streaming) {
+        try { channel.send(streamControl('READY', id)) }
+        catch (error) { void fail(id, error) }
+      }
     }
     channel.onmessage = event => {
+      if (peer.streaming) {
+        try {
+          if (sending) peer.sender.handle(event.data)
+          else if (typeof event.data === 'string') {
+            if (readStreamControl(event.data, id).type !== 'END') throw new Error('Khung ngoài giao thức.')
+            void receiveStreamEnd(id).catch(error => fail(id, error))
+          } else void peer.streamReceiver.push(event.data).catch(error => fail(id, error))
+        } catch (error) { void fail(id, error) }
+        return
+      }
       if (sending) {
         void fail(id, new Error('Tab gửi nhận khung dữ liệu ngoài giao thức.'))
         return
@@ -210,9 +323,14 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
   function createPeer(transfer, iceServers) {
     if (peers.has(transfer.id)) return peers.get(transfer.id)
     const sending = transfer.senderId === userId
+    const streaming = ['file-v2', 'file-v3'].includes(transfer.protocolVersion)
+    const storage = receiving.get(transfer.id)
+    if (streaming && !sending && !storage?.disk)
+      throw new Error('Vị trí lưu file không còn khả dụng. Hãy nhận lại.')
     const pc = new RTCPeerConnection({ iceServers })
     const peer = {
-      pc, abort: new AbortController(), receiver: sending ? null : createFileReceiver(transfer.fileSizeBytes),
+      pc, streaming, protocolVersion: transfer.protocolVersion, disk: storage?.disk, abort: storage?.abort || new AbortController(),
+      receiver: sending || streaming ? null : createFileReceiver(transfer.fileSizeBytes),
       candidates: [], chain: Promise.resolve(), outgoing: Promise.resolve(), startedAt: performance.now(),
       lastUpdate: 0, verifying: false,
     }
@@ -229,7 +347,7 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     }
     pc.ondatachannel = event => attachChannel(transfer.id, event.channel, false)
     armTimeout(transfer.id, 45000)
-    if (sending) attachChannel(transfer.id, pc.createDataChannel('file-v1', { ordered: true }), true)
+    if (sending) attachChannel(transfer.id, pc.createDataChannel(streaming ? `${transfer.protocolVersion}-0` : 'file-v1', { ordered: true }), true)
     return peer
   }
 
@@ -258,7 +376,8 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     if (disposed) return
     const previous = transfers.get(transfer.id)
     if (previous && versionNumber(previous.version) > versionNumber(transfer.version)) return
-    transfers.set(transfer.id, { ...previous, ...transfer })
+    transfers.set(transfer.id, { ...previous, ...transfer,
+      localPhase: isFileActive(transfer) ? previous?.localPhase : null })
     const ownEndpoint = transfer.senderConnectionId === connection.connectionId ||
       transfer.receiverConnectionId === connection.connectionId
     if (transfer.status === 'offered' && !previous && transfer.receiverId === userId)
@@ -349,10 +468,11 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
   function disconnected() {
     observations.clear()
     for (const id of [...peers.keys()]) releasePeer(id)
+    for (const id of [...receiving.keys()]) releasePeer(id)
     pending.clear()
     starting.clear()
     for (const [id, transfer] of transfers) {
-      if (isFileActive(transfer)) transfers.set(id, { ...transfer,
+      if (isFileActive(transfer) && !transfer.savedLocally) transfers.set(id, { ...transfer,
         localFailure: true, error: 'Kết nối đã ngắt. Phiên này cần gửi lại.' })
     }
     emit()
@@ -363,19 +483,25 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
   return {
     load, loadConversation, action, disconnected, forgetDownload,
     async offer(conversationId, file) {
-      if (!file || file.size > MAX_FILE_BYTES) throw new Error('Chọn tệp tối đa 100 MiB.')
+      if (!file || !Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_FILE_BYTES)
+        throw new Error('Chọn tệp tối đa 10 GiB.')
       if (!globalThis.RTCPeerConnection || !globalThis.crypto?.subtle)
         throw new Error('Trình duyệt cần hỗ trợ WebRTC và chạy trên HTTPS hoặc localhost.')
       if (connection.state !== 'Connected') throw new Error('Chưa kết nối máy chủ.')
+      if (file.size > LARGE_FILE_WARNING_BYTES && !await confirmLargeFile(file)) return null
+      if (disposed || connection.state !== 'Connected') throw new Error('Chưa kết nối máy chủ.')
       if (pending.size >= 2) throw new Error('Tab này đã có 2 tệp đang chờ hoặc đang gửi.')
       const clientTransferId = crypto.randomUUID()
       pending.set(clientTransferId, file)
       try {
-        await config()
-        const sha256Hex = await sha256(await file.arrayBuffer())
+        const settings = await config()
+        if (file.size > (settings.maximumFileBytes ?? MAX_FILE_BYTES))
+          throw new Error('Máy chủ hiện tại chưa hỗ trợ dung lượng tệp này. Hãy cập nhật máy chủ rồi thử lại.')
+        const sha256Hex = await hashFile(file, abort.signal)
         if (disposed || !pending.has(clientTransferId)) throw new Error('Phiên gửi đã bị hủy.')
         const result = await connection.invoke('OfferFile', {
           conversationId, clientTransferId, fileName: file.name, fileSizeBytes: file.size, sha256Hex,
+          supportedProtocols: file.size > LEGACY_MAX_FILE_BYTES ? ['file-v3'] : ['file-v1', 'file-v2'], requestedChannelCount: 1,
         })
         changed(result)
         return result

@@ -24,6 +24,7 @@ public sealed class FilesController(FileTransferService files, IConfiguration co
     public IActionResult Configuration() => Ok(new
     {
         maximumFileBytes = FileTransferService.MaximumFileBytes,
+        legacyMaximumFileBytes = FileTransferService.LegacyMaximumFileBytes,
         iceServers = configuration.GetSection("WebRtc:IceServers").Get<IceServer[]>() ?? []
     });
 

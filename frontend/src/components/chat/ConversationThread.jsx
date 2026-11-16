@@ -199,7 +199,7 @@ export default function ConversationThread({ conversation, loading, error, messa
                   <button className="btn composer-file-button" type="button"
                     onClick={() => fileInput.current?.click()}
                     disabled={sendingFile || peer.isDisabled || connectionState !== 'connected'}
-                    title="Gửi tệp tối đa 100 MiB" aria-label={`Gửi file cho ${peer.displayName}`}>
+                    title="Gửi tệp tối đa 10 GiB" aria-label={`Gửi file cho ${peer.displayName}`}>
                     <Icon name="paperclip" size="ico-sm" />{sendingFile ? 'Đang chuẩn bị…' : 'Gửi file'}
                   </button>
                   <span className="composer-count">{draft.length}/4000</span>

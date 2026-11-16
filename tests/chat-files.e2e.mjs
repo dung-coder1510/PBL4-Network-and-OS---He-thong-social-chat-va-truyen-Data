@@ -15,6 +15,8 @@ let browser
 
 // Thu thap bang chung tren browser API; holdFile mo phong mang khong truyen duoc byte de thu huy/loi.
 function instrument() {
+  // Giữ bộ nghiệm thu cũ cho trình duyệt nhận chỉ hỗ trợ file-v1.
+  Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true })
   window.__fileChannels = []
   window.__holdFile = false
   window.__progressSeen = false
@@ -154,7 +156,7 @@ try {
   const historical = b.locator('.file-message-card').filter({ hasText: name })
   await historical.waitFor()
   assert.equal(await historical.getByRole('link', { name: 'Tải xuống', exact: true }).count(), 0)
-  await historical.getByText('Tệp không còn ở tab này. Cần gửi lại để tải xuống.', { exact: true }).waitFor()
+  await historical.getByText('Kiểm tra thư mục lưu hoặc tệp đã tải xuống. Nếu chưa lưu, cần gửi lại.', { exact: true }).waitFor()
   assert.equal((await api(`/conversations/${conversation.data.id}/files`, { token: run.tokens[2] })).status, 404)
   assert.equal((await api(`/conversations/${conversation.data.id}/files`)).status, 401)
   const initial = await api(`/conversations/${conversation.data.id}`, { token: run.tokens[0] })

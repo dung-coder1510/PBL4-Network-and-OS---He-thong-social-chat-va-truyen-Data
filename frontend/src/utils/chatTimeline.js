@@ -11,6 +11,7 @@ export function chatTimeline(messages, transfers) {
 export function formatFileSize(bytes) {
   if (bytes < 1024) return `${Math.round(bytes)} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GiB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
 }
 

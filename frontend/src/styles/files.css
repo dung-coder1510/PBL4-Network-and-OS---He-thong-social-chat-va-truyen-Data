@@ -8,3 +8,9 @@
 .file-notice button { background: transparent; color: inherit; border: 0; cursor: pointer; font-size: 24px; }
 .file-actions small, td small { display: block; }
 td progress { display: block; max-width: 100%; margin-top: 8px; }
+.file-warning-dialog { margin: auto; width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg); }
+.file-warning-dialog::backdrop { background: rgb(15 23 42 / 45%); }
+.file-warning-dialog h2 { font-size: 20px; margin: 0 0 16px; }
+.file-warning-dialog p { margin: 12px 0; line-height: 1.6; color: var(--text-2); }
+.file-warning-name { overflow-wrap: anywhere; }
+.file-warning-dialog footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 24px; }

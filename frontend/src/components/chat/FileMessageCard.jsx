@@ -2,6 +2,9 @@ import { useState } from 'react'
 import Icon from '../Icon.jsx'
 import { useFileTransfers } from '../../realtime/fileTransferContext.js'
 import { isFileActive } from '../../services/fileTransfers.js'
+import { canSaveFile } from '../../services/fileStorage.js'
+import { LEGACY_MAX_FILE_BYTES } from '../../services/fileProtocol.js'
+import { localFileStatus } from '../../services/fileTransferState.js'
 import { fileTypeLabel, formatFileSize } from '../../utils/chatTimeline.js'
 
 // Mot the duy nhat cho moi TransferId; dung lai controller P2P cua trang Tep.
@@ -23,15 +26,15 @@ export default function FileMessageCard({ transfer, currentUserId }) {
   const progress = Math.min(transfer.fileSizeBytes, Math.max(0, transfer.transferredBytes || 0))
   const percent = transfer.fileSizeBytes ? Math.floor(progress / transfer.fileSizeBytes * 100) : 0
   const type = fileTypeLabel(transfer.fileName)
-  const canCancel = active && ownEndpoint
+  const canCancel = active && ownEndpoint && !transfer.savedLocally
   const hasActions = canRespond || canCancel || transfer.downloadUrl
 
   // Bat loi thao tac ngay tren the va chan bam lap; trang thai cuoi van do server quyet dinh.
-  async function act(method) {
+  async function act(method, extra) {
     if (busy) return
     setBusy(true)
     setError('')
-    try { await files.action(method, transfer.id) }
+    try { await files.action(method, transfer.id, extra) }
     catch (failure) { setError(failure.message || 'Chưa thực hiện được thao tác. Bạn thử lại nhé.') }
     finally { setBusy(false) }
   }
@@ -52,13 +55,16 @@ export default function FileMessageCard({ transfer, currentUserId }) {
         {transfer.bytesPerSecond > 0 ? ` · ${formatFileSize(transfer.bytesPerSecond)}/s` : ''}</span>
     </div>}
     {active && !canRespond && !ownEndpoint && <p className="file-message-hint">Đang xử lý ở tab khác.</p>}
-    {transfer.status === 'completed' && !sending && !transfer.downloadUrl &&
-      <p className="file-message-hint">Tệp không còn ở tab này. Cần gửi lại để tải xuống.</p>}
+    {transfer.savedLocally && <p className="file-message-hint">Đã lưu thành {transfer.savedName}.</p>}
+    {transfer.status === 'completed' && !sending && !transfer.downloadUrl && !transfer.savedLocally &&
+      <p className="file-message-hint">Kiểm tra thư mục lưu hoặc tệp đã tải xuống. Nếu chưa lưu, cần gửi lại.</p>}
     {(error || transfer.error) && <p className="file-message-error" role="alert">{error || transfer.error}</p>}
     {hasActions && <div className="file-message-actions">
       {canRespond && <>
         <button type="button" className="file-card-button primary" disabled={disabled}
           onClick={() => act('AcceptFile')}>Nhận file</button>
+        {canSaveFile(transfer) && transfer.fileSizeBytes <= LEGACY_MAX_FILE_BYTES && <button type="button" className="file-card-button" disabled={disabled}
+          onClick={() => act('AcceptFile', { legacy: true })}>Nhận để tải xuống</button>}
         <button type="button" className="file-card-button" disabled={disabled}
           onClick={() => act('RejectFile')}>Từ chối</button>
       </>}
@@ -71,8 +77,7 @@ export default function FileMessageCard({ transfer, currentUserId }) {
     <div className="msg-meta file-message-meta">
       <time dateTime={transfer.createdAt}>{new Date(transfer.createdAt).toLocaleTimeString('vi-VN',
         { hour: '2-digit', minute: '2-digit' })}</time>
-      <span role="status">{transfer.localFailure ? 'Kết nối đã ngắt. Cần gửi lại tệp.'
-        : labels[transfer.status] || transfer.status}</span>
+      <span role="status">{localFileStatus(transfer) || labels[transfer.status] || transfer.status}</span>
     </div>
   </>
 }

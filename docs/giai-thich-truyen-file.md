@@ -1,6 +1,11 @@
 # Giải thích nguyên lý và mã nguồn truyền file
 
-Tài liệu mô tả chức năng truyền file Web ↔ Web đang có trong dự án,
+**Cập nhật 15/11/2026:** phần mã chi tiết bên dưới mô tả bản v1, giới hạn
+100 MiB và nhận vào RAM. Bản mới hỗ trợ tối đa 10 GiB, cảnh báo trên 1 GiB,
+dùng v3/offset 64 bit và ghi đĩa cho file lớn. Xem
+[hướng dẫn hiện tại](file-transfers.md) để triển khai và kiểm thử bản mới.
+
+Tài liệu mô tả chức năng truyền file Web ↔ Web của bản v1,
 theo luồng một người A gửi `tailieu.pdf` cho người B.
 
 ## 1. Phương thức truyền file

@@ -91,6 +91,40 @@ try {
     await assert.rejects(sender.invoke('OfferFile', offer(invalid)))
   check('Membership, size, file name and SHA-256 are validated')
 
+  const streaming = await sender.invoke('OfferFile', offer({ supportedProtocols: ['file-v1', 'file-v2'] }))
+  assert.ok(streaming.supportedProtocols.includes('file-v2'))
+  await assert.rejects(receiver.invoke('AcceptFile', { ...action(streaming), protocolVersion: 'file-v2', channelCount: 2 }))
+  const acceptedStream = await receiver.invoke('AcceptFile', { ...action(streaming), protocolVersion: 'file-v2', channelCount: 1 })
+  assert.equal(acceptedStream.protocolVersion, 'file-v2')
+  assert.equal(acceptedStream.channelCount, 1)
+  await sender.invoke('CancelFile', action(acceptedStream))
+  const compatible = await sender.invoke('OfferFile', offer({ supportedProtocols: ['file-v1', 'file-v2'] }))
+  const legacy = await receiver.invoke('AcceptFile', action(compatible))
+  assert.equal(legacy.protocolVersion, 'file-v1')
+  await sender.invoke('CancelFile', action(legacy))
+  const oldSender = await sender.invoke('OfferFile', offer())
+  await assert.rejects(receiver.invoke('AcceptFile', { ...action(oldSender), protocolVersion: 'file-v2' }))
+  await sender.invoke('CancelFile', action(oldSender))
+  check('Single-channel v2 negotiation and old-client v1 fallback')
+
+  const settings = await api('/files/configuration', tokens[0])
+  assert.equal(settings.data.maximumFileBytes, 10 * 1024 ** 3)
+  assert.equal(settings.data.legacyMaximumFileBytes, 100 * 1024 ** 2)
+  await assert.rejects(sender.invoke('OfferFile', offer({
+    fileSizeBytes: 10 * 1024 ** 3 + 1, supportedProtocols: ['file-v3'],
+  })))
+  const large = await sender.invoke('OfferFile', offer({
+    fileSizeBytes: 10 * 1024 ** 3, supportedProtocols: ['file-v3'],
+  }))
+  assert.equal(large.fileSizeBytes, 10 * 1024 ** 3)
+  for (const protocolVersion of ['file-v1', 'file-v2', 'unknown'])
+    await assert.rejects(receiver.invoke('AcceptFile', { ...action(large), protocolVersion }))
+  const largeAccepted = await receiver.invoke('AcceptFile', { ...action(large), protocolVersion: 'file-v3' })
+  assert.equal(largeAccepted.protocolVersion, 'file-v3')
+  assert.equal((await api('/files', tokens[0])).data.items.find(item => item.id === large.id).fileSizeBytes, 10 * 1024 ** 3)
+  await sender.invoke('CancelFile', action(largeAccepted))
+  check('Exact 10 GiB persists in SQL, oversize and protocol downgrades are rejected')
+
   const request = offer()
   const offered = await sender.invoke('OfferFile', request)
   const duplicate = await sender.invoke('OfferFile', request)

@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react'
 import { conversationsApi } from '../services/conversationsApi.js'
 import { isFileActive } from '../services/fileTransfers.js'
+import { canSaveFile } from '../services/fileStorage.js'
+import { localFileStatus } from '../services/fileTransferState.js'
+import { LEGACY_MAX_FILE_BYTES } from '../services/fileProtocol.js'
+import { formatFileSize as size } from '../utils/chatTimeline.js'
 import { useFileTransfers } from '../realtime/fileTransferContext.js'
 import { useChatRealtime } from '../realtime/chatRealtimeContext.js'
 
@@ -9,8 +13,6 @@ const LABELS = {
   completed: 'Đã nhận đủ, SHA-256 khớp', rejected: 'Đã từ chối', cancelled: 'Đã hủy',
   expired: 'Lời mời hết hạn', failed: 'Thất bại',
 }
-const size = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024
-  ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
 
 export default function FilesPage({ token, user, onSessionExpired }) {
   const files = useFileTransfers()
@@ -60,7 +62,7 @@ export default function FilesPage({ token, user, onSessionExpired }) {
       <form className="file-send" onSubmit={event => {
         event.preventDefault()
         void perform('offer', async () => {
-          await files.offer(conversationId, selectedFile)
+          if (!await files.offer(conversationId, selectedFile)) return
           setSelectedFile(null)
           setSelectionKey(value => value + 1)
         })
@@ -74,7 +76,7 @@ export default function FilesPage({ token, user, onSessionExpired }) {
             </option>)}
           </select>
         </div>
-        <label>Chọn tệp (tối đa 100 MiB)
+        <label>Chọn tệp (tối đa 10 GiB)
           <input key={selectionKey} type="file" required onChange={event => setSelectedFile(event.target.files[0] || null)} />
         </label>
         <button className="btn btn--primary" disabled={!!busy || files.connectionState !== 'connected'}>
@@ -82,7 +84,8 @@ export default function FilesPage({ token, user, onSessionExpired }) {
         </button>
       </form>
       <p className="file-help">Chưa có người nhận trong danh sách? Mở cuộc trò chuyện từ mục Danh bạ trước.
-        File không lưu trên server. Tải xuống trước khi đóng hoặc tải lại trang; tab giữ tối đa 2 tệp đã nhận.</p>
+        Khi nhận, chọn tên và vị trí lưu, giữ nguyên đuôi tệp. Với cách nhận để tải xuống,
+        hãy tải trước khi đóng trang, tab giữ tối đa 2 tệp.</p>
       {files.connectionState !== 'connected' && <p role="status">Đang chờ kết nối máy chủ…</p>}
       {files.connectionState === 'disconnected' && <button className="btn" onClick={reconnect}>Kết nối lại</button>}
       {error && <p className="auth-workspace-error" role="alert">{error}</p>}
@@ -95,12 +98,13 @@ export default function FilesPage({ token, user, onSessionExpired }) {
           const active = isFileActive(transfer)
           const conversation = conversations.find(item => item.id === transfer.conversationId)
           const disabled = !!busy || files.connectionState !== 'connected'
-          const act = method => void perform(transfer.id, () => files.action(method, transfer.id))
+          const act = (method, extra) => void perform(transfer.id, () => files.action(method, transfer.id, extra))
           return <tr key={transfer.id}>
             <td><strong>{transfer.fileName}</strong><div>{size(transfer.fileSizeBytes)} · {sending ? 'Gửi đến' : 'Nhận từ'}{' '}
               {conversation?.peer.displayName || `#${sending ? transfer.receiverId : transfer.senderId}`}</div></td>
             <td>{new Date(transfer.createdAt).toLocaleString('vi-VN')}</td>
-            <td><span className={`pill pill--${transfer.status === 'completed' ? 'green' : 'gray'}`}>{LABELS[transfer.status]}</span>
+            <td><span className={`pill pill--${transfer.status === 'completed' ? 'green' : 'gray'}`}>{localFileStatus(transfer) || LABELS[transfer.status]}</span>
+              {transfer.savedLocally && <small>Đã lưu thành {transfer.savedName}.</small>}
               {active && transfer.transferredBytes !== undefined && <div>
                 <progress max={transfer.fileSizeBytes || 1} value={transfer.transferredBytes} aria-label={`Tiến độ ${transfer.fileName}`} />
                 <small>{size(transfer.transferredBytes)} / {size(transfer.fileSizeBytes)} · {size(transfer.bytesPerSecond || 0)}/s</small>
@@ -111,14 +115,17 @@ export default function FilesPage({ token, user, onSessionExpired }) {
             <td><div className="file-actions">
               {canRespond && <>
                 <button className="btn btn--primary" disabled={disabled} onClick={() => act('AcceptFile')}>Chấp nhận</button>
+                {canSaveFile(transfer) && transfer.fileSizeBytes <= LEGACY_MAX_FILE_BYTES && <button className="btn" disabled={disabled}
+                  onClick={() => act('AcceptFile', { legacy: true })}>Nhận để tải xuống</button>}
                 <button className="btn" disabled={disabled} onClick={() => act('RejectFile')}>Từ chối</button>
               </>}
-              {active && ownEndpoint && <button className="btn" disabled={disabled} onClick={() => act('CancelFile')}>Hủy</button>}
+              {active && ownEndpoint && !transfer.savedLocally && <button className="btn" disabled={disabled} onClick={() => act('CancelFile')}>Hủy</button>}
               {transfer.downloadUrl && <>
                 <a className="btn btn--primary" href={transfer.downloadUrl} download={transfer.fileName}>Tải xuống</a>
                 <button className="btn" onClick={() => files.forgetDownload(transfer.id)}>Giải phóng tệp</button>
               </>}
-              {transfer.status === 'completed' && !sending && !transfer.downloadUrl && <small>Tệp không còn ở tab này; cần gửi lại nếu chưa lưu.</small>}
+              {transfer.status === 'completed' && !sending && !transfer.downloadUrl && !transfer.savedLocally &&
+                <small>Kiểm tra thư mục lưu hoặc tệp đã tải xuống. Nếu chưa lưu, cần gửi lại.</small>}
             </div></td>
           </tr>
         })}</tbody>

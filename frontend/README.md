@@ -32,7 +32,9 @@ npm run build
 - Có trạng thái kết nối/gửi/nhận/đọc, gửi lại cùng `ClientMessageId`, unread và phân trang lịch sử.
 - Presence, typing, reconnect tải bù và danh bạ một chiều đã nối dữ liệu thật.
 - Truyền file WebRTC đã hoạt động: lời mời/chấp nhận, chunk 16 KiB, tiến độ, SHA-256,
-  hủy/từ chối và lịch sử metadata SQL. Tối đa 100 MiB/file; file không lưu trên server.
+  hủy/từ chối và lịch sử metadata SQL. Tối đa **10 GiB/file**, cảnh báo trước khi gửi
+  file **trên 1 GiB**. File lớn dùng `file-v3` ghi đĩa theo luồng; đường tương thích
+  v1/v2 giới hạn 100 MiB. Server chỉ lưu metadata, không lưu nội dung file.
 - Cuộc gọi chưa nối API.
 
 Xem [hướng dẫn xác thực](../docs/authentication.md) để chạy backend, cấu hình database có sẵn và kiểm thử.

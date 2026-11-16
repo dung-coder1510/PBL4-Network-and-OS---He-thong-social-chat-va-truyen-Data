@@ -1,4 +1,6 @@
-export const MAX_FILE_BYTES = 100 * 1024 * 1024
+export const MAX_FILE_BYTES = 10 * 1024 ** 3
+export const LEGACY_MAX_FILE_BYTES = 100 * 1024 ** 2
+export const LARGE_FILE_WARNING_BYTES = 1024 ** 3
 export const CHUNK_BYTES = 16 * 1024
 export const BUFFER_HIGH = 256 * 1024
 export const BUFFER_LOW = 64 * 1024
@@ -19,7 +21,7 @@ export function encodeChunk(index, payload) {
 }
 
 export function createFileReceiver(expectedBytes) {
-  if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || expectedBytes > MAX_FILE_BYTES)
+  if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || expectedBytes > LEGACY_MAX_FILE_BYTES)
     throw new Error('Kích thước tệp không hợp lệ.')
   let parts = []
   let receivedBytes = 0
@@ -47,10 +49,10 @@ export function createFileReceiver(expectedBytes) {
   }
 }
 
-export function waitForBuffer(channel, signal) {
+export function waitForBuffer(channel, signal, nextBytes = 0) {
   if (signal.aborted) return Promise.reject(new DOMException('Đã hủy', 'AbortError'))
   if (channel.readyState !== 'open') return Promise.reject(new Error('Kênh truyền đã đóng.'))
-  if (channel.bufferedAmount <= BUFFER_HIGH) return Promise.resolve()
+  if (channel.bufferedAmount + nextBytes <= BUFFER_HIGH) return Promise.resolve()
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => finish(new Error('Kênh truyền bị nghẽn quá 30 giây.')), 30000)
     function finish(error) {

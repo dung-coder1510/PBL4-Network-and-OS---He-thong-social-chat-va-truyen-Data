@@ -1,3 +1,12 @@
+export function localFileStatus(transfer) {
+  if (transfer.savedLocally) return transfer.status === 'completed'
+    ? 'Đã lưu trên máy' : 'Đã lưu trên máy, chưa xác nhận với máy chủ'
+  if (transfer.localFailure) return transfer.error || 'Kết nối đã ngắt. Cần gửi lại tệp.'
+  if (transfer.localPhase === 'verifying') return 'Đang xác minh SHA-256…'
+  if (transfer.localPhase === 'saving') return 'Đang lưu vào vị trí đã chọn…'
+  return null
+}
+
 export function waitForTransferring(getTransfer, changes, signal, timeoutMs = 60000) {
   return new Promise((resolve, reject) => {
     let timer

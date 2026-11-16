@@ -12,7 +12,8 @@ namespace PBL4.Services;
 public sealed class FileTransferService(IServiceScopeFactory scopes,
     IHubContext<ChatHub, IChatClient> hub, PresenceTracker presence, MonitoringService monitoring)
 {
-    public const long MaximumFileBytes = 100 * 1024 * 1024;
+    public const long MaximumFileBytes = 10L * 1024 * 1024 * 1024;
+    public const long LegacyMaximumFileBytes = 100L * 1024 * 1024;
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly Dictionary<long, EndpointPair> active = [];
 
@@ -22,6 +23,8 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
         public int ReceiverId { get; } = receiverId;
         public string Sender { get; } = senderConnection;
         public string? Receiver { get; set; }
+        public string[] SupportedProtocols { get; init; } = ["file-v1"];
+        public string ProtocolVersion { get; set; } = "file-v1";
         public DateTime Deadline { get; set; } = DateTime.UtcNow.AddSeconds(60);
         public bool Offered { get; set; }
         public bool Answered { get; set; }
@@ -43,7 +46,14 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
             request.FileSizeBytes is < 0 or > MaximumFileBytes ||
             string.IsNullOrWhiteSpace(request.FileName) || request.FileName.Length > 255 ||
             request.FileName.Any(character => char.IsControl(character) || character is '/' or '\\'))
-            throw new HubException("Thông tin tệp không hợp lệ (tối đa 100 MiB).");
+            throw new HubException("Thông tin tệp không hợp lệ (tối đa 10 GiB).");
+        if (request.RequestedChannelCount != 1 || request.SupportedProtocols is { Length: > 3 } ||
+            request.SupportedProtocols?.Any(protocol => protocol is not ("file-v1" or "file-v2" or "file-v3")) == true)
+            throw new HubException("Phiên bản này hỗ trợ một kênh truyền file.");
+        var protocols = request.SupportedProtocols is { Length: > 0 }
+            ? request.SupportedProtocols.Distinct().ToArray() : ["file-v1"];
+        if (request.FileSizeBytes > LegacyMaximumFileBytes && !protocols.Contains("file-v3"))
+            throw new HubException("Tệp trên 100 MiB cần phiên bản truyền theo luồng mới ở cả hai máy.");
         var hash = ParseHash(request.Sha256Hex);
         await gate.WaitAsync();
         try
@@ -80,7 +90,11 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
             };
             db.FileTransfers.Add(transfer);
             await db.SaveChangesAsync();
-            var endpoints = new EndpointPair(userId, receiverId, connectionId) { Size = transfer.FileSizeBytes };
+            var endpoints = new EndpointPair(userId, receiverId, connectionId)
+            {
+                Size = transfer.FileSizeBytes,
+                SupportedProtocols = protocols
+            };
             active.Add(transfer.Id, endpoints);
             return await PublishAsync(transfer, endpoints);
         }
@@ -120,6 +134,10 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
                 case "accept" when receiver && transfer.Status == "offered":
                     if (!presence.GetValidConnectionIds([endpoints.SenderId]).Contains(endpoints.Sender))
                         throw new HubException("Tab gửi đã ngắt kết nối.");
+                    if (request.ChannelCount != 1 || !endpoints.SupportedProtocols.Contains(request.ProtocolVersion ?? "file-v1") ||
+                        transfer.FileSizeBytes > LegacyMaximumFileBytes && request.ProtocolVersion != "file-v3")
+                        throw new HubException("Hai tab chưa hỗ trợ cùng giao thức truyền file.");
+                    endpoints.ProtocolVersion = request.ProtocolVersion ?? "file-v1";
                     endpoints.Receiver = connectionId;
                     endpoints.Deadline = DateTime.UtcNow.AddSeconds(45);
                     transfer.AcceptedAt = DateTime.UtcNow;
@@ -327,7 +345,9 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
         transfer.Status, DateTime.SpecifyKind(transfer.CreatedAt, DateTimeKind.Utc),
         transfer.AcceptedAt.HasValue ? DateTime.SpecifyKind(transfer.AcceptedAt.Value, DateTimeKind.Utc) : null,
         transfer.FinishedAt.HasValue ? DateTime.SpecifyKind(transfer.FinishedAt.Value, DateTimeKind.Utc) : null,
-        Convert.ToBase64String(transfer.RowVersion), endpoints?.Sender, endpoints?.Receiver);
+        Convert.ToBase64String(transfer.RowVersion), endpoints?.Sender, endpoints?.Receiver,
+        endpoints?.SupportedProtocols ?? ["file-v1"],
+        endpoints?.ProtocolVersion);
 
     private static long ParseId(string value) =>
         long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0
