@@ -4,6 +4,10 @@ export const LARGE_FILE_WARNING_BYTES = 1024 ** 3
 export const CHUNK_BYTES = 16 * 1024
 export const BUFFER_HIGH = 256 * 1024
 export const BUFFER_LOW = 64 * 1024
+export const MAX_FILE_CHANNELS = 8
+export const DEFERRED_HASH_PROTOCOL = 'file-v4'
+export const MULTICHANNEL_PROTOCOL = 'file-v5'
+export const STREAM_PROTOCOLS = ['file-v2', 'file-v3', DEFERRED_HASH_PROTOCOL, MULTICHANNEL_PROTOCOL]
 
 export async function sha256(buffer) {
   const digest = await crypto.subtle.digest('SHA-256', buffer)
@@ -49,10 +53,10 @@ export function createFileReceiver(expectedBytes) {
   }
 }
 
-export function waitForBuffer(channel, signal, nextBytes = 0) {
+export function waitForBuffer(channel, signal, nextBytes = 0, highWaterMark = BUFFER_HIGH) {
   if (signal.aborted) return Promise.reject(new DOMException('Đã hủy', 'AbortError'))
   if (channel.readyState !== 'open') return Promise.reject(new Error('Kênh truyền đã đóng.'))
-  if (channel.bufferedAmount + nextBytes <= BUFFER_HIGH) return Promise.resolve()
+  if (channel.bufferedAmount + nextBytes <= highWaterMark) return Promise.resolve()
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => finish(new Error('Kênh truyền bị nghẽn quá 30 giây.')), 30000)
     function finish(error) {

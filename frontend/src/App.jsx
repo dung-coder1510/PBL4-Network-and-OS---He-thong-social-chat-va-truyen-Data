@@ -6,6 +6,7 @@ import SettingsPage from './pages/SettingsPage.jsx'
 import ChatPage from './pages/ChatPage.jsx'
 import ContactsPage from './pages/ContactsPage.jsx'
 import { authApi } from './services/authApi.js'
+import { MAX_FILE_CHANNELS } from './services/fileProtocol.js'
 import { ChatRealtimeProvider } from './realtime/ChatRealtimeProvider.jsx'
 import { FileTransferProvider } from './realtime/FileTransferProvider.jsx'
 import FilesPage from './pages/FilesPage.jsx'
@@ -13,10 +14,21 @@ import AdminPage from './pages/AdminPage.jsx'
 import './styles/app.css'
 
 const PAGES = new Set(['chat', 'contacts', 'calls', 'files', 'admin', 'settings'])
+const DEVELOPER_SETTINGS_KEY = 'pbl4-developer-settings'
+
+function readDeveloperSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DEVELOPER_SETTINGS_KEY))
+    const count = saved?.fileChannelCount
+    return { enabled: saved?.enabled === true,
+      fileChannelCount: Number.isInteger(count) && count >= 1 && count <= MAX_FILE_CHANNELS ? count : 1 }
+  } catch { return { enabled: false, fileChannelCount: 1 } }
+}
 
 function App() {
   const [page, setPage] = useState('chat')
   const [theme, setTheme] = useState(() => localStorage.getItem('pbl4-theme') || 'light')
+  const [developerSettings, setDeveloperSettings] = useState(readDeveloperSettings)
   const [session, setSession] = useState(null)
   const [notice, setNotice] = useState('')
   const [loggingOut, setLoggingOut] = useState(false)
@@ -41,6 +53,10 @@ function App() {
     document.documentElement.dataset.theme = theme
     localStorage.setItem('pbl4-theme', theme)
   }, [theme])
+
+  useEffect(() => {
+    localStorage.setItem(DEVELOPER_SETTINGS_KEY, JSON.stringify(developerSettings))
+  }, [developerSettings])
 
   useEffect(() => {
     const onHashChange = () => {
@@ -123,11 +139,13 @@ function App() {
   return (
     <ChatRealtimeProvider key={session.sessionId} token={session.accessToken}
       user={session.user} onSessionExpired={sessionExpired}>
-      <FileTransferProvider token={session.accessToken} user={session.user}>
+      <FileTransferProvider token={session.accessToken} user={session.user} developerMode={developerSettings.enabled}
+        preferredChannelCount={developerSettings.enabled ? developerSettings.fileChannelCount : null}>
       <AppShell currentPage={visiblePage} onLogout={logout} onNavigate={navigate} user={session.user} loggingOut={loggingOut}>
         {logoutError && <p className="auth-workspace-error" role="alert">{logoutError}</p>}
         {visiblePage === 'settings'
-          ? <SettingsPage onThemeChange={setTheme} theme={theme} user={session.user} />
+          ? <SettingsPage onThemeChange={setTheme} theme={theme} user={session.user}
+              developerSettings={developerSettings} onDeveloperSettingsChange={setDeveloperSettings} />
           : visiblePage === 'contacts'
           ? <ContactsPage token={session.accessToken}
               onSessionExpired={sessionExpired}

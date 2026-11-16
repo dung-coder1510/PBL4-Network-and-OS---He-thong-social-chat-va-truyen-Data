@@ -7,7 +7,7 @@ export function localFileStatus(transfer) {
   return null
 }
 
-export function waitForTransferring(getTransfer, changes, signal, timeoutMs = 60000) {
+export function waitForTransferring(getTransfer, changes, signal, timeoutMs = 60000, requireHash = false) {
   return new Promise((resolve, reject) => {
     let timer
     function finish(error, transfer) {
@@ -26,7 +26,8 @@ export function waitForTransferring(getTransfer, changes, signal, timeoutMs = 60
       if (!transfer || transfer.localFailure ||
           !['offered', 'accepted', 'transferring'].includes(transfer.status)) {
         finish(new Error('Phiên truyền đã kết thúc trước khi xác nhận tệp.'))
-      } else if (transfer.status === 'transferring') finish(null, transfer)
+      } else if (transfer.status === 'transferring' && (!requireHash || transfer.sha256Hex))
+        finish(null, transfer)
     }
     changes.addEventListener('change', check)
     signal.addEventListener('abort', aborted, { once: true })

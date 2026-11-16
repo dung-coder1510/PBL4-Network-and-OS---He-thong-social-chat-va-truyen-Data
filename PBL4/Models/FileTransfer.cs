@@ -20,9 +20,8 @@ namespace PBL4.Models
 
         public long FileSizeBytes { get; set; } //[cite: 7]
 
-        [Required]
         [MaxLength(32)]
-        public byte[] Sha256 { get; set; } = null!; //[cite: 7]
+        public byte[]? Sha256 { get; set; }
 
         [MaxLength(32)]
         public byte[]? VerifiedSha256 { get; set; } //[cite: 7]

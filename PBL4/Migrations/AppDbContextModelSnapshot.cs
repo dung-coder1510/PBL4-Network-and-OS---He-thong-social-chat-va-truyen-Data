@@ -243,7 +243,6 @@ namespace PBL4.Migrations
                         .HasColumnType("int");
 
                     b.Property<byte[]>("Sha256")
-                        .IsRequired()
                         .HasMaxLength(32)
                         .HasColumnType("VARBINARY(32)");
 
@@ -273,7 +272,7 @@ namespace PBL4.Migrations
 
                             t.HasCheckConstraint("CK_File_Timeline", "([AcceptedAt] IS NULL OR [AcceptedAt] >= [CreatedAt]) AND ([FinishedAt] IS NULL OR [FinishedAt] >= ISNULL([AcceptedAt], [CreatedAt]))");
 
-                            t.HasCheckConstraint("CK_File_VerifiedSha", "[Status] <> 'completed' OR ([VerifiedSha256] IS NOT NULL AND [VerifiedSha256] = [Sha256])");
+                            t.HasCheckConstraint("CK_File_VerifiedSha", "[Status] <> 'completed' OR ([Sha256] IS NOT NULL AND [VerifiedSha256] IS NOT NULL AND [VerifiedSha256] = [Sha256])");
                         });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);

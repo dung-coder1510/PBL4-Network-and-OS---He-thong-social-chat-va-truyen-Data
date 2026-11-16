@@ -14,6 +14,9 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
 {
     public const long MaximumFileBytes = 10L * 1024 * 1024 * 1024;
     public const long LegacyMaximumFileBytes = 100L * 1024 * 1024;
+    public const int MaximumFileChannels = 8;
+    private const string DeferredHashProtocol = "file-v4";
+    private const string MultichannelProtocol = "file-v5";
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly Dictionary<long, EndpointPair> active = [];
 
@@ -25,6 +28,8 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
         public string? Receiver { get; set; }
         public string[] SupportedProtocols { get; init; } = ["file-v1"];
         public string ProtocolVersion { get; set; } = "file-v1";
+        public int RequestedChannelCount { get; init; } = 1;
+        public int ChannelCount { get; set; } = 1;
         public DateTime Deadline { get; set; } = DateTime.UtcNow.AddSeconds(60);
         public bool Offered { get; set; }
         public bool Answered { get; set; }
@@ -39,6 +44,12 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
         public long ReceiverBytes { get; set; }
     }
 
+    // Database chưa chạy migration vẫn nhận/gửi được bằng các phiên bản cũ.
+    public static async Task<bool> SupportsDeferredHashAsync(AppDbContext db, CancellationToken ct = default)
+        => await db.Database.SqlQueryRaw<int>(
+            "SELECT ISNULL(COLUMNPROPERTY(OBJECT_ID(N'dbo.FileTransfers'), N'Sha256', 'AllowsNull'), 0) AS [Value]")
+            .SingleAsync(ct) == 1;
+
     public async Task<FileTransferDto> OfferAsync(int userId, string connectionId, OfferFileDto request)
     {
         if (!long.TryParse(request.ConversationId, NumberStyles.None, CultureInfo.InvariantCulture,
@@ -47,14 +58,22 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
             string.IsNullOrWhiteSpace(request.FileName) || request.FileName.Length > 255 ||
             request.FileName.Any(character => char.IsControl(character) || character is '/' or '\\'))
             throw new HubException("Thông tin tệp không hợp lệ (tối đa 10 GiB).");
-        if (request.RequestedChannelCount != 1 || request.SupportedProtocols is { Length: > 3 } ||
-            request.SupportedProtocols?.Any(protocol => protocol is not ("file-v1" or "file-v2" or "file-v3")) == true)
-            throw new HubException("Phiên bản này hỗ trợ một kênh truyền file.");
+        if (request.RequestedChannelCount is < 1 or > MaximumFileChannels ||
+            request.SupportedProtocols is { Length: > 3 } || request.SupportedProtocols?.Any(protocol =>
+                protocol is not ("file-v1" or "file-v2" or "file-v3" or DeferredHashProtocol or MultichannelProtocol)) == true)
+            throw new HubException("Giao thức hoặc số kênh truyền file không hợp lệ.");
         var protocols = request.SupportedProtocols is { Length: > 0 }
             ? request.SupportedProtocols.Distinct().ToArray() : ["file-v1"];
-        if (request.FileSizeBytes > LegacyMaximumFileBytes && !protocols.Contains("file-v3"))
+        if (request.RequestedChannelCount > 1 && !protocols.Contains(MultichannelProtocol))
+            throw new HubException("Truyền từ 2 đến 8 kênh cần giao thức đa kênh.");
+        var deferredHash = request.Sha256Hex is null &&
+            protocols.All(protocol => protocol is DeferredHashProtocol or MultichannelProtocol);
+        if (protocols.Contains(DeferredHashProtocol) && (!deferredHash || request.FileSizeBytes <= LegacyMaximumFileBytes))
+            throw new HubException("Lời mời file-v4 chỉ dùng cho tệp lớn và chốt SHA-256 trong lúc truyền.");
+        if (request.FileSizeBytes > LegacyMaximumFileBytes && !protocols.Any(protocol =>
+                protocol is "file-v3" or DeferredHashProtocol or MultichannelProtocol))
             throw new HubException("Tệp trên 100 MiB cần phiên bản truyền theo luồng mới ở cả hai máy.");
-        var hash = ParseHash(request.Sha256Hex);
+        var hash = deferredHash ? null : ParseHash(request.Sha256Hex);
         await gate.WaitAsync();
         try
         {
@@ -72,7 +91,8 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
             if (existing is not null)
             {
                 if (existing.ConversationId != conversationId || existing.FileName != request.FileName ||
-                    existing.FileSizeBytes != request.FileSizeBytes || !existing.Sha256.SequenceEqual(hash))
+                    existing.FileSizeBytes != request.FileSizeBytes ||
+                    (hash is not null && (existing.Sha256 is null || !existing.Sha256.SequenceEqual(hash))))
                     throw new HubException("Mã truyền tệp đã được dùng cho tệp khác.");
                 return ToDto(existing, receiverId, active.GetValueOrDefault(existing.Id));
             }
@@ -82,6 +102,8 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
                     item.SenderId == userId || item.ReceiverId == userId) >= 2 ||
                 active.Values.Count(item => item.SenderId == receiverId || item.ReceiverId == receiverId) >= 2)
                 throw new HubException("Tối đa 2 phiên truyền đang chờ hoặc đang chạy mỗi tài khoản.");
+            if (deferredHash && !await SupportsDeferredHashAsync(db))
+                throw new HubException("Database chưa hỗ trợ chốt SHA-256 trong lúc truyền. Vui lòng tải lại trang.");
             var transfer = new FileTransfer
             {
                 ConversationId = conversationId, ClientTransferId = request.ClientTransferId,
@@ -93,7 +115,8 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
             var endpoints = new EndpointPair(userId, receiverId, connectionId)
             {
                 Size = transfer.FileSizeBytes,
-                SupportedProtocols = protocols
+                SupportedProtocols = protocols,
+                RequestedChannelCount = request.RequestedChannelCount
             };
             active.Add(transfer.Id, endpoints);
             return await PublishAsync(transfer, endpoints);
@@ -102,7 +125,7 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
     }
 
     public async Task<FileTransferDto> ActAsync(int userId, string connectionId,
-        FileActionDto request, string action, CompleteFileDto? completed = null)
+        FileActionDto request, string action, CompleteFileDto? completed = null, string? sourceHash = null)
     {
         var id = ParseId(request.TransferId);
         await gate.WaitAsync();
@@ -134,10 +157,15 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
                 case "accept" when receiver && transfer.Status == "offered":
                     if (!presence.GetValidConnectionIds([endpoints.SenderId]).Contains(endpoints.Sender))
                         throw new HubException("Tab gửi đã ngắt kết nối.");
-                    if (request.ChannelCount != 1 || !endpoints.SupportedProtocols.Contains(request.ProtocolVersion ?? "file-v1") ||
-                        transfer.FileSizeBytes > LegacyMaximumFileBytes && request.ProtocolVersion != "file-v3")
+                    var protocol = request.ProtocolVersion ?? "file-v1";
+                    var maxChannels = protocol == MultichannelProtocol ? endpoints.RequestedChannelCount : 1;
+                    if (request.ChannelCount < 1 || request.ChannelCount > maxChannels ||
+                        !endpoints.SupportedProtocols.Contains(protocol) ||
+                        transfer.FileSizeBytes > LegacyMaximumFileBytes &&
+                        protocol is not ("file-v3" or DeferredHashProtocol or MultichannelProtocol))
                         throw new HubException("Hai tab chưa hỗ trợ cùng giao thức truyền file.");
-                    endpoints.ProtocolVersion = request.ProtocolVersion ?? "file-v1";
+                    endpoints.ProtocolVersion = protocol;
+                    endpoints.ChannelCount = request.ChannelCount;
                     endpoints.Receiver = connectionId;
                     endpoints.Deadline = DateTime.UtcNow.AddSeconds(45);
                     transfer.AcceptedAt = DateTime.UtcNow;
@@ -150,8 +178,21 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
                     transfer.Status = "transferring";
                     endpoints.Deadline = DateTime.UtcNow.AddMinutes(30);
                     break;
+                case "hash" when sender && transfer.Status == "transferring" &&
+                    endpoints.ProtocolVersion is DeferredHashProtocol or MultichannelProtocol:
+                    var digest = ParseHash(sourceHash);
+                    if (transfer.Sha256 is not null)
+                    {
+                        if (!transfer.Sha256.SequenceEqual(digest))
+                            throw new HubException("SHA-256 của bên gửi đã được chốt.");
+                        return ToDto(transfer, endpoints.ReceiverId, endpoints);
+                    }
+                    transfer.Sha256 = digest;
+                    break;
                 case "complete" when receiver && transfer.Status == "transferring" && completed is not null:
                     var verified = ParseHash(completed.VerifiedSha256Hex);
+                    if (transfer.Sha256 is null)
+                        throw new HubException("Bên gửi chưa chốt SHA-256 cho phiên truyền.");
                     if (completed.ReceivedBytes != transfer.FileSizeBytes || !verified.SequenceEqual(transfer.Sha256))
                         throw new HubException("Số byte hoặc SHA-256 không khớp.");
                     transfer.VerifiedSha256 = verified;
@@ -340,20 +381,21 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
     private static FileTransferDto ToDto(FileTransfer transfer, int receiverId, EndpointPair? endpoints) => new(
         transfer.Id.ToString(CultureInfo.InvariantCulture), transfer.ClientTransferId,
         transfer.ConversationId.ToString(CultureInfo.InvariantCulture), transfer.SenderId, receiverId,
-        transfer.FileName, transfer.FileSizeBytes, Convert.ToHexString(transfer.Sha256).ToLowerInvariant(),
+        transfer.FileName, transfer.FileSizeBytes,
+        transfer.Sha256 is null ? null : Convert.ToHexString(transfer.Sha256).ToLowerInvariant(),
         transfer.VerifiedSha256 is null ? null : Convert.ToHexString(transfer.VerifiedSha256).ToLowerInvariant(),
         transfer.Status, DateTime.SpecifyKind(transfer.CreatedAt, DateTimeKind.Utc),
         transfer.AcceptedAt.HasValue ? DateTime.SpecifyKind(transfer.AcceptedAt.Value, DateTimeKind.Utc) : null,
         transfer.FinishedAt.HasValue ? DateTime.SpecifyKind(transfer.FinishedAt.Value, DateTimeKind.Utc) : null,
         Convert.ToBase64String(transfer.RowVersion), endpoints?.Sender, endpoints?.Receiver,
         endpoints?.SupportedProtocols ?? ["file-v1"],
-        endpoints?.ProtocolVersion);
+        endpoints?.ProtocolVersion, endpoints?.ChannelCount ?? 1, endpoints?.RequestedChannelCount ?? 1);
 
     private static long ParseId(string value) =>
         long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0
             ? id : throw new HubException("Mã phiên truyền không hợp lệ.");
 
-    private static byte[] ParseHash(string value)
+    private static byte[] ParseHash(string? value)
     {
         if (value is null || value.Length != 64 || !value.All(Uri.IsHexDigit))
             throw new HubException("SHA-256 phải gồm 64 ký tự hex.");

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { createHash } from 'node:crypto'
 import { createFileStorage, pickFileDestination } from '../frontend/src/services/fileStorage.js'
 
 function mockPicker(t, picker) {
@@ -74,13 +75,16 @@ test('cancelling Save As preserves the AbortError for the accept flow', async t 
   await assert.rejects(() => pickFileDestination('audio.mp3'), { name: 'AbortError' })
 })
 
-test('insufficient temporary quota fails before creating or overwriting any file', async t => {
-  const previous = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
-  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {
-    storage: { estimate: async () => ({ quota: 1024, usage: 512 }),
-      getDirectory() { assert.fail('Must not create temporary file') } },
-  } })
-  t.after(() => Object.defineProperty(globalThis, 'navigator', previous))
-  await assert.rejects(createFileStorage({ createWritable() { assert.fail('Must not touch target') } },
-    new AbortController().signal, 513), /không đủ chỗ lưu tạm/)
+test('a mismatch leaves the selected writer uncommitted and aborts it', async () => {
+  let closed = false
+  let aborted = false
+  const disk = await createFileStorage({ name: 'received.bin', async createWritable() {
+    return { async write() {}, async close() { closed = true }, async abort() { aborted = true } }
+  } }, new AbortController().signal, 3)
+  await disk.write(0, Uint8Array.of(1, 2, 3))
+  assert.throws(() => disk.verify(createHash('sha256').update('wrong data').digest('hex')), /SHA-256 không khớp/)
+  await assert.rejects(disk.commit(), /chưa xác minh/)
+  await disk.dispose()
+  assert.equal(closed, false)
+  assert.equal(aborted, true)
 })

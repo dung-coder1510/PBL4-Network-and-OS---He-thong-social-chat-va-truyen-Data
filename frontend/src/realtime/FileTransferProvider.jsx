@@ -5,7 +5,7 @@ import { createFileTransfers } from '../services/fileTransfers.js'
 import LargeFileWarningDialog from '../components/files/LargeFileWarningDialog.jsx'
 import '../styles/files.css'
 
-export function FileTransferProvider({ token, user, children }) {
+export function FileTransferProvider({ token, user, developerMode, preferredChannelCount, children }) {
   const { connection, connectionState } = useChatRealtime()
   const manager = useRef(null)
   const [snapshot, setSnapshot] = useState({ items: [], nextCursor: null })
@@ -48,8 +48,8 @@ export function FileTransferProvider({ token, user, children }) {
   return (
     <FileTransferContext.Provider value={{
       ...snapshot, connectionState, connectionId: connection?.connectionId,
-      loadConversation,
-      offer: (...args) => manager.current.offer(...args),
+      loadConversation, developerMode,
+      offer: (conversationId, file) => manager.current.offer(conversationId, file, preferredChannelCount),
       action: (...args) => manager.current.action(...args),
       loadMore: () => manager.current.load(true),
       forgetDownload: id => manager.current.forgetDownload(id),

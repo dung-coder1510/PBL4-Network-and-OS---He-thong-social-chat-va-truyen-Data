@@ -1,7 +1,8 @@
 import { request } from './apiClient.js'
 import { waitForTransferring } from './fileTransferState.js'
 import {
-  BUFFER_LOW, CHUNK_BYTES, LARGE_FILE_WARNING_BYTES, LEGACY_MAX_FILE_BYTES, MAX_FILE_BYTES,
+  BUFFER_LOW, CHUNK_BYTES, DEFERRED_HASH_PROTOCOL, LARGE_FILE_WARNING_BYTES, LEGACY_MAX_FILE_BYTES,
+  MAX_FILE_BYTES, MAX_FILE_CHANNELS, MULTICHANNEL_PROTOCOL, STREAM_PROTOCOLS,
   createFileReceiver, encodeChunk, sha256, waitForBuffer,
 } from './fileProtocol.js'
 import { createStreamReceiver, createStreamSender, hashFile, readStreamControl, streamControl, streamHeaderBytes } from './fileStreamProtocol.js'
@@ -67,15 +68,17 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     if (!peer) return
     peers.delete(id)
     clearTimeout(peer.timeout)
+    clearTimeout(peer.closeTimeout)
     peer.abort.abort()
     peer.receiver?.clear()
     peer.pc.onconnectionstatechange = null
-    if (peer.channel) {
-      peer.channel.onclose = null
-      peer.channel.onerror = null
-      peer.channel.onmessage = null
-      peer.channel.onopen = null
-      peer.channel.close()
+    for (const channel of peer.channels) {
+      if (!channel) continue
+      channel.onclose = null
+      channel.onerror = null
+      channel.onmessage = null
+      channel.onopen = null
+      channel.close()
     }
     peer.pc.close()
   }
@@ -99,26 +102,27 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     if (!offered || offered.status !== 'offered') throw new Error('Lời mời không còn hiệu lực.')
     if (!Number.isSafeInteger(offered.fileSizeBytes) || offered.fileSizeBytes < 0 || offered.fileSizeBytes > MAX_FILE_BYTES)
       throw new Error('Chỉ nhận tệp tối đa 10 GiB.')
+    const diskProtocol = !extra.legacy && canSaveFile(offered)
+      ? offered.supportedProtocols.find(version => STREAM_PROTOCOLS.includes(version)) : null
     if (offered.fileSizeBytes > LEGACY_MAX_FILE_BYTES &&
-        (extra.legacy || !canSaveFile(offered) || !offered.supportedProtocols.includes('file-v3')))
+        (!diskProtocol || diskProtocol === 'file-v2'))
       throw new Error('Tệp lớn cần phiên bản ứng dụng mới, trình duyệt hỗ trợ lưu trực tiếp và HTTPS hoặc localhost.')
     accepting.add(id)
     const storage = { abort: new AbortController(), disk: null }
     receiving.set(id, storage)
     try {
-      let protocolVersion = 'file-v1'
-      if (!extra.legacy && canSaveFile(offered)) {
+      if (diskProtocol) {
         // Gọi picker trước await mạng để giữ user activation từ nút Nhận file.
         const target = await pickFileDestination(offered.fileName)
         storage.abort.signal.throwIfAborted()
         storage.disk = await createFileStorage(target, storage.abort.signal, offered.fileSizeBytes)
-        protocolVersion = offered.supportedProtocols.includes('file-v3') ? 'file-v3' : 'file-v2'
       }
       await config()
       storage.abort.signal.throwIfAborted()
       const current = transfers.get(id)
       if (disposed || current?.status !== 'offered') throw new Error('Lời mời không còn hiệu lực.')
-      return await invokeAction(method, id, { protocolVersion, channelCount: 1 })
+      const channelCount = diskProtocol === MULTICHANNEL_PROTOCOL ? current.requestedChannelCount : 1
+      return await invokeAction(method, id, { protocolVersion: diskProtocol || 'file-v1', channelCount })
     } catch (error) {
       // Một broadcast accepted có thể đến trước lỗi mất phản hồi của invocation.
       if (peers.has(id) && transfers.get(id)?.receiverConnectionId === connection.connectionId)
@@ -176,20 +180,23 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     const file = pending.get(current.clientTransferId)
     if (!file) throw new Error('Tệp gốc không còn ở tab gửi. Hãy gửi lại.')
     if (peer.streaming) {
-      await peer.sender.send(file, () => action('BeginFileTransfer', id))
+      const finalizeHash = current.sha256Hex == null
+        ? sha256Hex => action('FinalizeFileHash', id, { sha256Hex }) : undefined
+      await peer.sender.send(file, () => action('BeginFileTransfer', id), finalizeHash)
       armTimeout(id, 30 * 60 * 1000)
       return
     }
+    const [channel] = peer.channels
     await action('BeginFileTransfer', id)
     for (let offset = 0, index = 0; offset < file.size; offset += CHUNK_BYTES, index++) {
-      await waitForBuffer(peer.channel, peer.abort.signal)
+      await waitForBuffer(channel, peer.abort.signal)
       const chunk = await file.slice(offset, offset + CHUNK_BYTES).arrayBuffer()
       if (peer.abort.signal.aborted) return
-      peer.channel.send(encodeChunk(index, chunk))
+      channel.send(encodeChunk(index, chunk))
       progress(id, offset + chunk.byteLength)
     }
-    await waitForBuffer(peer.channel, peer.abort.signal)
-    peer.channel.send(JSON.stringify({ type: 'end' }))
+    await waitForBuffer(channel, peer.abort.signal)
+    channel.send(JSON.stringify({ type: 'end' }))
     progress(id, file.size)
   }
 
@@ -230,22 +237,18 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     await peer.streamReceiver.finish()
     phase(id, 'verifying')
     observe(id, 'verifying')
-    const file = await peer.disk.finish()
-    const verifiedSha256Hex = await hashFile(file, peer.abort.signal, () => armTimeout(id))
-    await waitForTransferring(() => transfers.get(id), changes, peer.abort.signal)
-    const current = transfers.get(id)
-    if (file.size !== current.fileSizeBytes || verifiedSha256Hex !== current.sha256Hex)
-      throw new Error('SHA-256 không khớp; tệp đã bị loại bỏ.')
+    const current = await waitForTransferring(() => transfers.get(id), changes, peer.abort.signal, 60000, true)
+    const verifiedSha256Hex = peer.disk.verify(current.sha256Hex)
     phase(id, 'saving')
-    await peer.disk.save(file, () => armTimeout(id), savedName => {
-      transfers.set(id, { ...transfers.get(id), savedLocally: true, savedName,
-        localFailure: false, error: '', localPhase: 'saved', transferredBytes: file.size })
-      emit()
-    })
+    const savedName = await peer.disk.commit()
+    // Giữ kết quả khi trình duyệt đã chốt file mà kết nối SignalR vừa ngắt.
+    transfers.set(id, { ...transfers.get(id), savedLocally: true, savedName,
+      localFailure: false, error: '', localPhase: 'saved', transferredBytes: current.fileSizeBytes })
+    emit()
     clearTimeout(peer.timeout)
     try {
       if (!disposed && connection.state === 'Connected')
-        await action('CompleteFile', id, { receivedBytes: file.size, verifiedSha256Hex })
+        await action('CompleteFile', id, { receivedBytes: current.fileSizeBytes, verifiedSha256Hex })
     } catch {
       await load().catch(() => {})
     } finally {
@@ -255,48 +258,53 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     if (!disposed) onNotice(`Đã lưu trên máy: ${transfers.get(id).savedName}`)
   }
 
+  function channelLabel(peer, index) {
+    return peer.streaming ? `${peer.protocolVersion}-${index}` : 'file-v1'
+  }
+
   function attachChannel(id, channel, sending) {
     const peer = peers.get(id)
-    if (!peer || peer.channel || channel.label !== (peer.streaming ? `${peer.protocolVersion}-0` : 'file-v1') || !channel.ordered ||
+    const index = peer?.streaming ? Number(channel.label.slice(peer.protocolVersion.length + 1)) : 0
+    if (!peer || !Number.isInteger(index) || index < 0 || index >= peer.channels.length || peer.channels[index] ||
+        channel.label !== channelLabel(peer, index) || !channel.ordered ||
         channel.maxRetransmits !== null || channel.maxPacketLifeTime !== null) {
       channel.close()
       void fail(id, new Error('Kênh dữ liệu không hợp lệ.'))
       return
     }
-    peer.channel = channel
+    peer.channels[index] = channel
     channel.binaryType = 'arraybuffer'
     channel.bufferedAmountLowThreshold = BUFFER_LOW
-    if (peer.streaming && sending) peer.sender = createStreamSender({
-      channel, transferId: id, signal: peer.abort.signal, protocolVersion: peer.protocolVersion, onProgress: bytes => progress(id, bytes),
-    })
-    if (peer.streaming && !sending) peer.streamReceiver = createStreamReceiver({
-      size: transfers.get(id).fileSizeBytes, signal: peer.abort.signal, protocolVersion: peer.protocolVersion,
-      write: (offset, data) => peer.disk.write(offset, data),
-      acknowledge: bytes => channel.send(streamControl('ACK', id, bytes)),
-      onProgress: bytes => progress(id, bytes),
-    })
     channel.onopen = () => {
-      observe(id, 'channel-open')
-      peer.startedAt = performance.now()
-      armTimeout(id)
+      const maxChannels = peer.pc.sctp?.maxChannels
+      if (peer.channels.length > 1 && Number.isInteger(maxChannels) && maxChannels < peer.channels.length) {
+        void fail(id, new Error('WebRTC hỗ trợ ít kênh hơn mức đã chọn. Hãy giảm số kênh rồi gửi lại.'))
+        return
+      }
       if (peer.streaming && peer.pc.sctp?.maxMessageSize < CHUNK_BYTES + streamHeaderBytes(peer.protocolVersion)) {
         void fail(id, new Error('WebRTC không hỗ trợ kích thước khung truyền.'))
         return
       }
-      if (sending) void sendFile(id).catch(error => fail(id, error))
-      else if (peer.streaming) {
-        try { channel.send(streamControl('READY', id)) }
+      if (!peer.opened) {
+        peer.opened = true
+        observe(id, 'channel-open')
+        peer.startedAt = performance.now()
+        armTimeout(id)
+        if (sending) void sendFile(id).catch(error => fail(id, error))
+      }
+      if (!sending && peer.streaming) {
+        try { channel.send(streamControl('READY', id, undefined, index)) }
         catch (error) { void fail(id, error) }
       }
     }
     channel.onmessage = event => {
       if (peer.streaming) {
         try {
-          if (sending) peer.sender.handle(event.data)
+          if (sending) peer.sender.handle(event.data, index)
           else if (typeof event.data === 'string') {
-            if (readStreamControl(event.data, id).type !== 'END') throw new Error('Khung ngoài giao thức.')
-            void receiveStreamEnd(id).catch(error => fail(id, error))
-          } else void peer.streamReceiver.push(event.data).catch(error => fail(id, error))
+            if (readStreamControl(event.data, id, index).type !== 'END') throw new Error('Khung ngoài giao thức.')
+            if (peer.streamReceiver.end(index)) void receiveStreamEnd(id).catch(error => fail(id, error))
+          } else void peer.streamReceiver.push(event.data, index).catch(error => fail(id, error))
         } catch (error) { void fail(id, error) }
         return
       }
@@ -311,9 +319,9 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     }
     channel.onclose = () => {
       if (!isFileActive(transfers.get(id)) || peer.verifying) return
-      clearTimeout(peer.timeout)
-      peer.timeout = setTimeout(() => {
-        if (isFileActive(transfers.get(id)))
+      // Tiến độ ở các kênh còn mở không kéo dài thời gian chờ xác nhận của kênh đã đóng.
+      peer.closeTimeout ??= setTimeout(() => {
+        if (isFileActive(transfers.get(id)) && !peer.verifying)
           void fail(id, new Error('Kênh truyền đã đóng trước khi xác nhận.'))
       }, 2000)
     }
@@ -323,13 +331,17 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
   function createPeer(transfer, iceServers) {
     if (peers.has(transfer.id)) return peers.get(transfer.id)
     const sending = transfer.senderId === userId
-    const streaming = ['file-v2', 'file-v3'].includes(transfer.protocolVersion)
+    const streaming = STREAM_PROTOCOLS.includes(transfer.protocolVersion)
+    const channelCount = transfer.protocolVersion === MULTICHANNEL_PROTOCOL ? transfer.channelCount : 1
+    if (!Number.isInteger(channelCount) || channelCount < 1 || channelCount > MAX_FILE_CHANNELS)
+      throw new Error('Số kênh truyền file không hợp lệ.')
     const storage = receiving.get(transfer.id)
     if (streaming && !sending && !storage?.disk)
       throw new Error('Vị trí lưu file không còn khả dụng. Hãy nhận lại.')
     const pc = new RTCPeerConnection({ iceServers })
     const peer = {
-      pc, streaming, protocolVersion: transfer.protocolVersion, disk: storage?.disk, abort: storage?.abort || new AbortController(),
+      pc, streaming, channels: new Array(channelCount), opened: false,
+      protocolVersion: transfer.protocolVersion, disk: storage?.disk, abort: storage?.abort || new AbortController(),
       receiver: sending || streaming ? null : createFileReceiver(transfer.fileSizeBytes),
       candidates: [], chain: Promise.resolve(), outgoing: Promise.resolve(), startedAt: performance.now(),
       lastUpdate: 0, verifying: false,
@@ -345,9 +357,20 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
       if (pc.connectionState === 'failed') void fail(transfer.id,
         new Error('Không kết nối được WebRTC. Mạng khác NAT có thể cần TURN.'))
     }
+    const streamOptions = { signal: peer.abort.signal, protocolVersion: peer.protocolVersion,
+      onProgress: bytes => progress(transfer.id, bytes) }
+    if (sending) {
+      for (let index = 0; index < channelCount; index++)
+        attachChannel(transfer.id, pc.createDataChannel(channelLabel(peer, index), { ordered: true }), true)
+      if (streaming) peer.sender = createStreamSender({ ...streamOptions, channels: peer.channels, transferId: transfer.id })
+    } else if (streaming) {
+      peer.streamReceiver = createStreamReceiver({ ...streamOptions, size: transfer.fileSizeBytes, channelCount,
+        write: (offset, data) => peer.disk.write(offset, data),
+        acknowledge: bytes => peer.channels[0].send(streamControl('ACK', transfer.id, bytes)),
+      })
+    }
     pc.ondatachannel = event => attachChannel(transfer.id, event.channel, false)
     armTimeout(transfer.id, 45000)
-    if (sending) attachChannel(transfer.id, pc.createDataChannel(streaming ? `${transfer.protocolVersion}-0` : 'file-v1', { ordered: true }), true)
     return peer
   }
 
@@ -377,6 +400,8 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
     const previous = transfers.get(transfer.id)
     if (previous && versionNumber(previous.version) > versionNumber(transfer.version)) return
     transfers.set(transfer.id, { ...previous, ...transfer,
+      protocolVersion: transfer.protocolVersion ?? previous?.protocolVersion,
+      channelCount: transfer.protocolVersion ? transfer.channelCount : previous?.channelCount,
       localPhase: isFileActive(transfer) ? previous?.localPhase : null })
     const ownEndpoint = transfer.senderConnectionId === connection.connectionId ||
       transfer.receiverConnectionId === connection.connectionId
@@ -482,7 +507,7 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
   connection.on('FileSignal', signalReceived)
   return {
     load, loadConversation, action, disconnected, forgetDownload,
-    async offer(conversationId, file) {
+    async offer(conversationId, file, preferredChannelCount = null) {
       if (!file || !Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_FILE_BYTES)
         throw new Error('Chọn tệp tối đa 10 GiB.')
       if (!globalThis.RTCPeerConnection || !globalThis.crypto?.subtle)
@@ -497,11 +522,20 @@ export function createFileTransfers({ connection, token, userId, onChange, onNot
         const settings = await config()
         if (file.size > (settings.maximumFileBytes ?? MAX_FILE_BYTES))
           throw new Error('Máy chủ hiện tại chưa hỗ trợ dung lượng tệp này. Hãy cập nhật máy chủ rồi thử lại.')
-        const sha256Hex = await hashFile(file, abort.signal)
+        const large = file.size > LEGACY_MAX_FILE_BYTES
+        const experimental = preferredChannelCount !== null && settings.maximumFileChannels > 0
+        const requestedChannelCount = experimental
+          ? Math.min(preferredChannelCount, settings.maximumFileChannels, MAX_FILE_CHANNELS) : 1
+        const supportedProtocols = large
+          ? [settings.supportsDeferredHash && typeof globalThis.Worker === 'function' ? DEFERRED_HASH_PROTOCOL : 'file-v3']
+          : ['file-v1', 'file-v2']
+        if (experimental) supportedProtocols.unshift(MULTICHANNEL_PROTOCOL)
+        const deferred = supportedProtocols.includes(DEFERRED_HASH_PROTOCOL)
+        const sha256Hex = deferred ? null : await hashFile(file, abort.signal)
         if (disposed || !pending.has(clientTransferId)) throw new Error('Phiên gửi đã bị hủy.')
         const result = await connection.invoke('OfferFile', {
           conversationId, clientTransferId, fileName: file.name, fileSizeBytes: file.size, sha256Hex,
-          supportedProtocols: file.size > LEGACY_MAX_FILE_BYTES ? ['file-v3'] : ['file-v1', 'file-v2'], requestedChannelCount: 1,
+          supportedProtocols, requestedChannelCount,
         })
         changed(result)
         return result

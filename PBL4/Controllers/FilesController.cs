@@ -21,10 +21,12 @@ public sealed class FilesController(FileTransferService files, IConfiguration co
     }
 
     [HttpGet("configuration")]
-    public IActionResult Configuration() => Ok(new
+    public async Task<IActionResult> Configuration(CancellationToken ct) => Ok(new
     {
         maximumFileBytes = FileTransferService.MaximumFileBytes,
         legacyMaximumFileBytes = FileTransferService.LegacyMaximumFileBytes,
+        maximumFileChannels = FileTransferService.MaximumFileChannels,
+        supportsDeferredHash = await FileTransferService.SupportsDeferredHashAsync(db, ct),
         iceServers = configuration.GetSection("WebRtc:IceServers").Get<IceServer[]>() ?? []
     });
 

@@ -11,15 +11,17 @@ test('large file limit is 10 GiB while buffered legacy receiving stays capped at
   assert.throws(() => limits.createFileReceiver(100 * 1024 ** 2 + 1))
 })
 
-test('v3 frames preserve offsets around 4 GiB and at the end of 10 GiB', () => {
+test('v3 and v5 frames preserve offsets around 4 GiB and at the end of 10 GiB', () => {
   const payload = Uint8Array.of(7, 8, 9).buffer
-  for (const offset of [0, 2 ** 32 - 1, 2 ** 32, 2 ** 32 + 1, 10 * 1024 ** 3 - 3]) {
-    const frame = protocol.encodeStreamChunk(offset, payload, 'file-v3')
-    assert.equal(frame.byteLength, 11)
-    assert.equal(new DataView(frame).getBigUint64(0), BigInt(offset))
-    const decoded = protocol.readStreamChunk(frame, 'file-v3')
-    assert.equal(decoded.offset, offset)
-    assert.deepEqual(decoded.payload, new Uint8Array(payload))
+  for (const version of ['file-v3', limits.MULTICHANNEL_PROTOCOL]) {
+    for (const offset of [0, 2 ** 32 - 1, 2 ** 32, 2 ** 32 + 1, 10 * 1024 ** 3 - 3]) {
+      const frame = protocol.encodeStreamChunk(offset, payload, version)
+      assert.equal(frame.byteLength, 11)
+      assert.equal(new DataView(frame).getBigUint64(0), BigInt(offset))
+      const decoded = protocol.readStreamChunk(frame, version)
+      assert.equal(decoded.offset, offset)
+      assert.deepEqual(decoded.payload, new Uint8Array(payload))
+    }
   }
 })
 
@@ -44,12 +46,12 @@ test('v3 streams a virtual 10 GiB file through sender and receiver with bounded 
   const errors = []
   const sender = protocol.createStreamSender({ protocolVersion: 'file-v3', transferId: 'large',
     signal: abort.signal, onProgress: count => { acknowledged = count; assert.ok(count <= written) },
-    channel: { readyState: 'open', bufferedAmount: 0, send(frame) {
+    channels: [{ readyState: 'open', bufferedAmount: 0, send(frame) {
       if (typeof frame === 'string') { end = receiver.finish(); return }
       queued += frame.byteLength - 8
       peak = Math.max(peak, queued)
       receiver.push(frame).catch(error => { errors.push(error); abort.abort(error) })
-    } },
+    } }],
   })
   const receiver = protocol.createStreamReceiver({ protocolVersion: 'file-v3', size: limits.MAX_FILE_BYTES,
     signal: abort.signal, onProgress() {},

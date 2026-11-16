@@ -125,7 +125,7 @@ namespace PBL4.Data
                     t.HasCheckConstraint("CK_File_FileName", "LTRIM(RTRIM([FileName])) <> ''");
                     t.HasCheckConstraint("CK_File_Timeline",
                         "([AcceptedAt] IS NULL OR [AcceptedAt] >= [CreatedAt]) AND ([FinishedAt] IS NULL OR [FinishedAt] >= ISNULL([AcceptedAt], [CreatedAt]))");
-                    t.HasCheckConstraint("CK_File_VerifiedSha", "[Status] <> 'completed' OR ([VerifiedSha256] IS NOT NULL AND [VerifiedSha256] = [Sha256])");
+                    t.HasCheckConstraint("CK_File_VerifiedSha", "[Status] <> 'completed' OR ([Sha256] IS NOT NULL AND [VerifiedSha256] IS NOT NULL AND [VerifiedSha256] = [Sha256])");
                 });
             });
 

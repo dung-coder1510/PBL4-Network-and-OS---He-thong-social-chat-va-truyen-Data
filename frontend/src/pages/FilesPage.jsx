@@ -80,7 +80,7 @@ export default function FilesPage({ token, user, onSessionExpired }) {
           <input key={selectionKey} type="file" required onChange={event => setSelectedFile(event.target.files[0] || null)} />
         </label>
         <button className="btn btn--primary" disabled={!!busy || files.connectionState !== 'connected'}>
-          {busy === 'offer' ? 'Đang tính SHA-256…' : 'Gửi lời mời'}
+          {busy === 'offer' ? 'Đang chuẩn bị…' : 'Gửi lời mời'}
         </button>
       </form>
       <p className="file-help">Chưa có người nhận trong danh sách? Mở cuộc trò chuyện từ mục Danh bạ trước.
@@ -109,6 +109,9 @@ export default function FilesPage({ token, user, onSessionExpired }) {
                 <progress max={transfer.fileSizeBytes || 1} value={transfer.transferredBytes} aria-label={`Tiến độ ${transfer.fileName}`} />
                 <small>{size(transfer.transferredBytes)} / {size(transfer.fileSizeBytes)} · {size(transfer.bytesPerSecond || 0)}/s</small>
               </div>}
+              {files.developerMode && transfer.acceptedAt && transfer.channelCount > 0 && <small>
+                {transfer.channelCount} kênh{!active && transfer.bytesPerSecond > 0 ? ` · ${size(transfer.bytesPerSecond)}/s` : ''}
+              </small>}
               {active && !canRespond && !ownEndpoint && <small>Đang xử lý ở tab khác.</small>}
               {transfer.error && <p role="status">{transfer.error}</p>}
             </td>

@@ -22,6 +22,15 @@ test('does not wait if the transferring notification already arrived', async () 
     new AbortController().signal), transfer)
 })
 
+test('a deferred transfer waits for the sender hash and its updated version', async () => {
+  let transfer = { status: 'transferring', version: 'before-hash', sha256Hex: null }
+  const changes = new EventTarget()
+  const waiting = waitForTransferring(() => transfer, changes, new AbortController().signal, 1000, true)
+  transfer = { ...transfer, version: 'with-hash', sha256Hex: 'a'.repeat(64) }
+  changes.dispatchEvent(new Event('change'))
+  assert.equal(await waiting, transfer)
+})
+
 test('cancelled, failed, expired and completed sessions never authorize completion', async () => {
   for (const status of ['cancelled', 'failed', 'expired', 'completed', 'rejected']) {
     let transfer = { status: 'accepted' }

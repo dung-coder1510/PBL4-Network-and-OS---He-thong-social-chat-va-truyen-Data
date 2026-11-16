@@ -1,10 +1,10 @@
-import { CHUNK_BYTES } from './fileProtocol.js'
+import { sha256 } from '@noble/hashes/sha2.js'
+import { bytesToHex } from '@noble/hashes/utils.js'
+import { STREAM_PROTOCOLS } from './fileProtocol.js'
 
-export const canSaveFile = transfer => transfer?.supportedProtocols?.some(version => ['file-v2', 'file-v3'].includes(version)) &&
+export const canSaveFile = transfer => transfer?.supportedProtocols?.some(version => STREAM_PROTOCOLS.includes(version)) &&
   globalThis.isSecureContext && typeof globalThis.showSaveFilePicker === 'function' &&
-  typeof globalThis.navigator?.storage?.getDirectory === 'function' &&
-  typeof globalThis.FileSystemFileHandle?.prototype.createWritable === 'function' &&
-  !!globalThis.navigator?.locks
+  typeof globalThis.FileSystemFileHandle?.prototype.createWritable === 'function'
 
 // Tên từ peer chỉ được dùng như tên file đơn, có thể lưu trên Windows.
 function safeName(name) {
@@ -42,66 +42,48 @@ export async function pickFileDestination(fileName) {
   return target
 }
 
-// Mỗi phiên có file tạm riêng và một writer. dispose chỉ dọn file do phiên tạo.
-export async function createFileStorage(target, signal, expectedBytes = 0) {
-  if (typeof navigator.storage.estimate === 'function') {
-    const { quota, usage } = await navigator.storage.estimate()
+// Chrome dùng vùng ghi tạm cạnh file đích và công bố dữ liệu khi close() thành công.
+export async function createFileStorage(target, signal, expectedBytes) {
+  signal.throwIfAborted()
+  const writer = await target.createWritable({ mode: 'exclusive' })
+  if (signal.aborted) {
+    await writer.abort().catch(() => {})
     signal.throwIfAborted()
-    if (Number.isFinite(quota) && Number.isFinite(usage) && expectedBytes > quota - usage)
-      throw new Error('Trình duyệt không đủ chỗ lưu tạm tệp này. Hãy giải phóng dung lượng rồi thử lại.')
   }
-  const root = await navigator.storage.getDirectory()
-  const name = 'pbl4-' + crypto.randomUUID() + '.part'
-  let writer
+  const hash = sha256.create()
+  let written = 0
+  let verified = false
+  let closed = false
   let cleaning
-  const temporary = await root.getFileHandle(name, { create: true })
-  const dispose = () => cleaning ??= (async () => {
-    if (writer) await writer.abort().catch(() => {})
-    await root.removeEntry(name).catch(() => {})
-  })()
-  try {
-    writer = await temporary.createWritable()
-    signal.throwIfAborted()
-  } catch (error) { await dispose(); throw error }
   return {
-    write(position, data) {
+    async write(position, data) {
       signal.throwIfAborted()
-      return writer.write({ type: 'write', position, data })
+      if (verified || position !== written || written + data.byteLength > expectedBytes)
+        throw new Error('Chunk sai vị trí hoặc vượt kích thước tệp.')
+      await writer.write({ type: 'write', position, data })
+      signal.throwIfAborted()
+      hash.update(data)
+      written += data.byteLength
     },
-    async finish() {
+    verify(expectedHash) {
       signal.throwIfAborted()
+      if (written !== expectedBytes) throw new Error('Chưa ghi đủ tệp.')
+      const digest = bytesToHex(hash.digest())
+      if (digest !== expectedHash) throw new Error('SHA-256 không khớp; tệp đã bị loại bỏ.')
+      verified = true
+      return digest
+    },
+    async commit() {
+      signal.throwIfAborted()
+      if (!verified) throw new Error('Tệp chưa xác minh SHA-256.')
       await writer.close()
-      writer = null
-      signal.throwIfAborted()
-      return temporary.getFile()
+      closed = true
+      return target.name
     },
-    async save(file, onProgress, onSaved) {
-      // Tuần tự hóa xuất file giữa các tab. Tên và quyền ghi do Save As quyết định.
-      return navigator.locks.request('pbl4-file-export', { signal }, async () => {
-        signal.throwIfAborted()
-        const savedName = target.name
-        let output
-        try {
-          output = await target.createWritable()
-          for (let offset = 0; offset < file.size; offset += CHUNK_BYTES) {
-            signal.throwIfAborted()
-            const chunk = await file.slice(offset, offset + CHUNK_BYTES).arrayBuffer()
-            signal.throwIfAborted()
-            await output.write(chunk)
-            onProgress(offset + chunk.byteLength)
-          }
-          signal.throwIfAborted()
-          await output.close()
-        } catch (error) {
-          // abort giữ nguyên nội dung cũ. Không xóa target: đó có thể là file của người dùng.
-          await output?.abort().catch(() => {})
-          throw error
-        }
-        // close đã thành công thì giữ kết quả, kể cả khi SignalR vừa bị ngắt.
-        onSaved(savedName)
-        return savedName
-      })
+    dispose() {
+      // Chỉ hủy stream do phiên mở. Handle đích có thể trỏ đến file của người dùng.
+      hash.destroy()
+      return closed ? Promise.resolve() : (cleaning ??= writer.abort().catch(() => {}))
     },
-    dispose,
   }
 }

@@ -7,6 +7,11 @@ Frontend: tại `frontend`, chạy `npm install` nếu chưa cài dependency, r�
 Cấu hình SQL/JWT theo [authentication.md](authentication.md).
 Sử dụng bảng `FileTransfers` có sẵn. Frontend dùng `@noble/hashes` 2.4.0
 để tính SHA-256 theo từng phần. Chạy `npm install` sau khi cập nhật mã nguồn.
+Để bật `file-v4` trên database đã có, áp dụng migration `DeferredFileHash` nếu
+database được quản lý bằng EF. Với database khởi tạo từ SQL, chạy
+[003_deferred_file_hash.sql](../database/migrations/003_deferred_file_hash.sql).
+Migration giữ hash của các phiên đã lưu. Cập nhật backend và tải lại frontend ở
+cả hai máy để dùng v4. Trên database chưa nâng cấp, client dùng v3 cho file lớn.
 
 1. Đăng nhập hai tài khoản trong hai cửa sổ/tab. Tạo cuộc trò chuyện giữa hai người
    từ mục Trò chuyện hoặc Danh bạ.
@@ -21,8 +26,8 @@ Sử dụng bảng `FileTransfers` có sẵn. Frontend dùng `@noble/hashes` 2.4
 4. Giữ hai tab mở. Cùng thẻ đó cập nhật tiến độ, số byte, tốc độ trung bình và nút **Hủy**.
    Hết byte gửi chưa có nghĩa là đã hoàn tất: cần người nhận xác nhận đủ byte và SHA-256.
 5. Trên trình duyệt hỗ trợ, **Nhận file** mở hộp **Lưu thành (Save As)** để chọn
-   tên file và vị trí lưu. File được ghi tạm, xác minh SHA-256 rồi lưu vào file
-   đã chọn. File tối đa **100 MiB** có thể chọn **Nhận để tải xuống**
+   tên file và vị trí lưu. App ghi từng phần vào đích đã chọn rồi chốt file
+   sau khi kiểm tra đủ byte và SHA-256. File tối đa **100 MiB** có thể chọn **Nhận để tải xuống**
    để dùng cách nhận vào bộ nhớ. Trình duyệt thiếu API ghi file chỉ tự dùng cách này
    với file nhỏ; file lớn bắt buộc hai bên dùng phiên bản mới và máy nhận hỗ trợ ghi đĩa.
    Có thể đổi trang trong ứng dụng trong lúc truyền.
@@ -41,13 +46,13 @@ writer. Chọn sai đuôi hiện lỗi và giữ lời mời để chọn lại.
 dài hoặc thay tên dành riêng của Windows, tên gợi ý cũng giữ phần đuôi.
 [Bộ lọc của File System Access](https://wicg.github.io/file-system-access/#file-picker-options)
 
-Nếu chọn file đã tồn tại, hộp lưu
-cho phép xác nhận thay thế; app dùng đúng file đã chọn, không tự thêm hậu tố.
-Nội dung cũ chỉ được thay khi file mới đã xác minh và đóng writer thành công.
-Hủy/lỗi trước đó giữ nguyên nội dung cũ. Với tên file mới, trình duyệt có thể
-tạo sẵn file rỗng khi chọn đích; file rỗng này có thể còn lại nếu phiên thất bại.
+Muốn giữ file đã tồn tại, hãy chọn tên mới. Trong Chrome, xác nhận thay thế
+trong **Lưu thành** có thể làm rỗng file cũ ngay khi chọn đích. Hủy stream
+chỉ bỏ phần ghi chưa công bố và không hoàn tác thao tác của picker.
+Trình duyệt có thể tạo sẵn file đích rỗng, vẫn còn khi phiên thất bại.
+[Cách Chromium xử lý Lưu thành](https://github.com/chromium/chromium/blob/main/content/browser/file_system_access/file_system_access_manager_impl.cc#L1950-L1969)
 
-Thẻ hoàn tất hiển thị **Đã gửi** ở bên gửi. Bên nhận `file-v2`/`file-v3` thấy
+Thẻ hoàn tất hiển thị **Đã gửi** ở bên gửi. Bên nhận v2 trở lên thấy
 **Đã lưu trên máy** sau khi file đích đã đóng thành công và server xác nhận.
 Nếu mất phản hồi xác nhận, thẻ hiện **Đã lưu trên máy, chưa xác nhận với máy chủ**.
 Với `file-v1`, tab giữ Blob và hiện **Sẵn sàng tải xuống**. Cần tải file đó
@@ -81,40 +86,63 @@ vai trò gửi/nhận và connection đã ràng buộc. Hai tab nhận cùng b�
 SDP/ICE chỉ chuyển đến tab đã chọn; các tab khác chỉ nhận metadata trạng thái.
 `ClientTransferId` chống trùng lời mời, không cho tái sử dụng ID với metadata khác.
 
-## Giao thức ghi đĩa một kênh: file-v2 và file-v3
+## Giao thức ghi đĩa
 
 `OfferFile` thêm `supportedProtocols` và `requestedChannelCount`.
-`AcceptFile` chọn `protocolVersion` và `channelCount`. Backend chấp nhận
-một kênh ở phiên bản này và phát cấu hình qua `FileChanged`. File tối đa 100 MiB
-quảng bá `file-v1` và `file-v2`; file lớn hơn chỉ quảng bá `file-v3`. Backend không
-cho hạ file lớn về v1/v2. Client cũ thiếu trường mới chỉ gửi/nhận được tối đa 100 MiB.
+`AcceptFile` chọn `protocolVersion` và `channelCount`. Backend kiểm tra số kênh
+được đề nghị rồi phát cấu hình qua `FileChanged`. File tối đa 100 MiB quảng bá
+`file-v1` và `file-v2`. File lớn quảng bá `file-v4` nếu có Web Worker
+và máy chủ hỗ trợ chốt hash sau lời mời; trường hợp còn lại dùng `file-v3`.
+Hai tab cần dùng giao thức đã thương lượng.
 
 DataChannel tin cậy và có thứ tự. File được chia thành khối tối đa 16 KiB.
 `file-v2-0` giữ vị trí byte **uint32, 4 byte big-endian**, giới hạn 100 MiB.
-`file-v3-0` dùng **uint64, 8 byte big-endian**, đủ cho vị trí vượt 4 GiB;
-giới hạn 10 GiB. JSON kích thước/ACK vẫn dùng số nguyên an toàn của JavaScript,
-C# dùng `long`, SQL dùng `BIGINT`, không cần migration. Máy nhận mở file
-tạm OPFS trước khi chấp nhận và gửi `READY` khi kênh mở. Máy gửi gọi
-`BeginFileTransfer` sau `READY`.
+Từ v3, khung dùng **uint64, 8 byte big-endian**, đủ cho
+vị trí vượt 4 GiB; giới hạn 10 GiB. Máy nhận mở writer của đích đã chọn
+trước khi chấp nhận và gửi `READY` khi kênh mở. Máy gửi gọi
+`BeginFileTransfer` sau `READY`. Cách lưu này cần HTTPS hoặc
+localhost và trình duyệt hỗ trợ File System Access.
 
-Hạn mức chưa ACK là 512 KiB. Máy nhận gửi ACK sau mỗi 64 KiB đã ghi và sau
-khối cuối. Một hàng đợi ghi tuần tự giới hạn dữ liệu đang chờ trên máy nhận.
-Tiến độ ở phía gửi tính theo ACK, ở phía nhận tính theo thao tác ghi hoàn tất.
+V2/v3 giữ hạn mức chưa ACK 512 KiB và ACK mỗi 64 KiB. V4 dùng hạn mức
+2 MiB và gom tối đa 256 KiB mỗi lượt ghi. Máy nhận ACK sau khi writer
+ghi thành công từng lô và ở cuối. Tiến độ gửi tính theo ACK, tiến độ
+nhận tính theo số byte đã ghi. Buffer WebRTC ở đầu gửi có hạn mức riêng.
 
-Sau `END`, máy nhận chờ hàng đợi ghi xong, đóng file tạm, đọc từng phần
-để xác minh SHA-256 rồi chép vào file đích đã chọn trong hộp Lưu thành.
-`CompleteFile` được gọi sau khi đóng file đích. Lỗi trước khi lưu hoàn tất
-dọn file tạm và hủy writer đích; không xóa file người dùng đã chọn. File đã lưu được giữ khi mất
-phản hồi từ server. Trạng thái lưu tại máy được giữ trong phiên tab đang mở.
+V4 gửi lời mời với hash chưa chốt. Web Worker đọc lô 512 KiB, cập nhật SHA-256
+theo thứ tự và chuyển buffer cho luồng gửi, tối đa một lô đọc trước.
+Tab gửi gọi `FinalizeFileHash` với hash của toàn file trước khung `END`.
+Server chỉ chấp nhận hash do tab gửi của phiên cung cấp và không cho đổi hash.
+V1/v2/v3 vẫn tính hash nguồn trước lời mời.
 
-Máy nhận ghi file cần HTTPS hoặc localhost, File System Access, OPFS và Web Locks.
-Trước khi tạo file tạm, kiểm tra `navigator.storage.estimate()` để từ chối khi
-quota còn lại nhỏ hơn kích thước file. Đây chỉ là ước lượng; lỗi hết chỗ/quyền
-ghi vẫn có thể xảy ra trong khi truyền hoặc lưu. Cần dung lượng cho cả file tạm
-trong vùng lưu của trình duyệt và bản đích, thường khoảng hai lần dung lượng
-file khi cùng ổ. [Đặc tả ước lượng dung lượng](https://storage.spec.whatwg.org/#dom-storagemanager-estimate)
-Kế hoạch thử nhiều kênh được mô tả
-trong [đặc tả v2](dac-ta-truyen-file-webrtc-v2.md).
+Máy nhận cập nhật hash từ byte đã nhận và ghi thành công.
+Sau `END`, máy nhận chờ đủ byte và hash đã chốt, so sánh rồi đóng writer.
+`CompleteFile` chỉ được gọi sau khi đóng file thành công. Bản lưu được
+giữ nếu mất phản hồi từ server. Lỗi trước khi chốt sẽ hủy writer.
+Chrome có thể ghi vào file `.crswap` cạnh đích rồi đổi khi đóng writer.
+App không ghi thêm bản OPFS hay chép toàn bộ file ở cuối.
+[File System API](https://fs.spec.whatwg.org/#dom-filesystemwritablefilestream-write)
+
+### Thử truyền từ 1 đến 8 kênh
+
+Bật **Cài đặt → Nhà phát triển → Kích hoạt chế độ nhà phát triển** rồi chọn
+**Số kênh truyền file**. Thiết lập lưu trên trình duyệt và áp dụng từ lời mời
+tiếp theo. Mặc định là một kênh. Trong chế độ này, thẻ file hiện số kênh
+đã chốt và tốc độ đo được trong phiên.
+
+Khi bật thử nghiệm, lời mời thêm `file-v5` cùng giao thức một kênh phù hợp với
+tệp. Cấu hình 1 kênh trong chế độ thử dùng v5 để đo cùng cách ghi và hạn mức
+bộ đệm với các cấu hình 2–8 kênh. Tab nhận chọn v5 nếu hỗ trợ hoặc chấp nhận
+bằng giao thức một kênh đã đề nghị. Với file lớn, server đã có migration hash
+hỗ trợ gửi lời mời trước khi chốt SHA-256. Trên database cũ, nguồn tính
+SHA-256 trước lời mời.
+
+V5 mở các DataChannel có thứ tự trên cùng một `RTCPeerConnection`, chờ `READY`
+ở tất cả kênh rồi gửi. Khối thứ `i` đi qua kênh `i % channelCount`. Máy nhận
+kiểm tra offset theo từng kênh, giữ các khối đến sớm trong cửa sổ chung và ghi
+byte liên tiếp vào một file đích. V5 dùng tổng cửa sổ 2 MiB và các lượt ghi
+tối đa 256 KiB. Kênh 0 báo ACK cho số byte liên tiếp đã ghi. Máy nhận đợi `END`
+từ mọi kênh trước khi kiểm tra SHA-256 và chốt file. Lỗi trên một kênh kết thúc
+phiên. Đo riêng đường trực tiếp và TURN để chọn số kênh phù hợp.
 
 ## Giao thức file-v1 tương thích
 
@@ -132,7 +160,7 @@ trong [đặc tả v2](dac-ta-truyen-file-webrtc-v2.md).
   **hash do receiver báo** với hash đã thỏa thuận, không tự đọc hay hash nội dung file.
   SHA-256 không phải công cụ phát hiện mã độc.
 - Phía nhận `file-v1` ghép Blob và dùng `crypto.subtle.digest` với ArrayBuffer
-  đầy đủ. Phía gửi hiện tính hash theo từng phần cho cả hai phiên bản.
+  đầy đủ. Phía gửi luôn tính hash theo từng phần.
 - Tab giữ tối đa 2 Blob đã nhận để tải xuống; tệp cũ hơn được giải phóng tự động.
   Nút **Giải phóng tệp**, logout, hủy và lỗi dọn URL/buffer/peer/timer tương ứng.
 - Listener nằm trong `FileTransferProvider`, sống cùng phiên đăng nhập, không phụ thuộc
@@ -152,7 +180,7 @@ accepted / transferring -> failed / cancelled
 Lời mời hết hạn sau 60 giây, kết nối sau khi chấp nhận có 45 giây.
 Worker quét mỗi 5 giây nên thông báo hết hạn có thể trễ thêm một nhịp quét.
 Client phát hiện đình trệ sau 60 giây khi đang truyền, ghi, băm hoặc lưu.
-Máy gửi v2/v3 chuyển sang chờ xác nhận khi toàn bộ byte đã được ACK. Server
+Máy gửi v2 trở lên chuyển sang chờ xác nhận khi toàn bộ byte đã được ACK. Server
 giới hạn cả phiên 30 phút kể từ `BeginFileTransfer`. Phiên đăng nhập hiện cũng
 hết hạn sau 30 phút tính từ đăng nhập; tăng giới hạn dung lượng không kéo dài
 JWT hoặc bổ sung resume. File lớn cần hoàn tất trước khi phiên hết hạn.
@@ -196,11 +224,12 @@ cấu hình CORS/JWT/proxy như các phần chat hiện tại.
 | Thành phần | Chức năng |
 | --- | --- |
 | `GET /api/v1/files?beforeId=...` | Lịch sử của chính thành viên, 50 dòng/trang, `nextCursor` |
-| `GET /api/v1/files/configuration` | Giới hạn file và danh sách ICE server |
+| `GET /api/v1/files/configuration` | Giới hạn file và số kênh, danh sách ICE và hỗ trợ hash chốt sau |
 | `OfferFile` | Tạo lời mời, lưu metadata, phát `FileChanged` |
 | `AcceptFile` / `RejectFile` | Quyết định của người nhận, kiểm tra RowVersion |
 | `SendFileSignal` | `offer` / `answer` SDP và `ice` JSON, ràng buộc connection |
 | `BeginFileTransfer` | Tab gửi báo DataChannel đã mở sau trao đổi SDP |
+| `FinalizeFileHash` | Tab gửi v4/v5 chốt SHA-256, không cho đổi hash đã lưu |
 | `CompleteFile` | Tab nhận xác nhận đủ byte và SHA-256 |
 | `CancelFile` / `FailFile` | Kết thúc bởi một trong hai endpoint |
 | `FileChanged` / `FileSignal` | Server phát metadata / báo hiệu đến client |
@@ -215,7 +244,8 @@ Backend: `Services/FileTransferService.cs`, `Realtime/FileTransferMonitor.cs`,
 `Realtime/ChatHub.cs`, `Controllers/FilesController.cs`.
 Frontend: `services/fileProtocol.js` (frame/hash/backpressure),
 `services/fileStreamProtocol.js` (READY/ACK/END, băm từng phần và cửa sổ gửi),
-`services/fileStorage.js` (file tạm, ghi theo vị trí và xuất file đã xác minh),
+`services/fileHashWorker.js` (đọc và băm từng lô ở bên gửi),
+`services/fileStorage.js` (ghi đích, băm và chốt file đã xác minh),
 `services/fileTransferState.js` (chờ đồng bộ trạng thái, hủy và timeout),
 `services/fileTransfers.js` (WebRTC/lifecycle), `realtime/FileTransferProvider.jsx`,
 `pages/FilesPage.jsx`.
@@ -259,14 +289,13 @@ truyền byte/hash thật, nhận/từ chối/hủy/lỗi kênh, timeline, quy�
 
 `file-large-protocol.mjs` sinh từng khối của file ảo 10 GiB qua sender/receiver,
 kiểm tra vị trí liên tiếp và cửa sổ ACK mà không tạo file 10 GiB trên đĩa.
-`file-large.e2e.mjs` tạo file thật **1 GiB + 1 byte**, kiểm tra cảnh báo ở Chat
-và Tệp, Hủy/Escape, giao diện nhỏ, từ chối fallback RAM/thiếu quota, truyền
-WebRTC v3 một kênh, ghi đĩa, SHA-256 và chat đồng thời. Bài thử yêu cầu trên
-4 GiB dung lượng trống, dùng profile Chrome thường riêng cho máy nhận.
-Picker được thay bằng file handle OPFS riêng của test, nên cả file tạm và
-đích đều tính vào quota của website. Không dùng context ẩn danh cho bài lớn
-này; lỗi quota vẫn là ca thất bại, không tự nâng quota trình duyệt trong test.
-Hộp Windows native cần nghiệm thu riêng.
+`file-large.e2e.mjs` mặc định tạo file thật **1 GiB + 1 byte**. Dùng
+`FILE_TEST_BYTES=4294967297` để thử vượt 4 GiB. Đo thời gian từ xác nhận gửi đến
+lời mời, từ bấm Nhận file đến lần ghi đầu tiên và đến khi hoàn tất. Kiểm tra
+ghi trước khi chốt SHA-256 ở bên gửi, đối chiếu hash bản lưu và nhắn tin đồng thời.
+Profile Chrome thường tạm giữ file nguồn và đích trên đĩa. Test dùng
+handle OPFS để thay picker native, đồng thời chặn app tự mở file tạm OPFS.
+Đích thay thế vẫn chịu quota của trình duyệt. Cần đủ đĩa cho hai bản sao thử.
 Truyền file ảo 10 GiB không thay cho nghiệm thu file thật 10 GiB trên LAN/TURN.
 
 Ngày 16/11/2026, bài lớn đã qua với **1.073.741.825 byte**, SHA-256 bản

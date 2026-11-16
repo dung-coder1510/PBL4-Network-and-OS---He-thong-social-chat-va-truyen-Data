@@ -33,8 +33,10 @@ npm run build
 - Presence, typing, reconnect tải bù và danh bạ một chiều đã nối dữ liệu thật.
 - Truyền file WebRTC đã hoạt động: lời mời/chấp nhận, chunk 16 KiB, tiến độ, SHA-256,
   hủy/từ chối và lịch sử metadata SQL. Tối đa **10 GiB/file**, cảnh báo trước khi gửi
-  file **trên 1 GiB**. File lớn dùng `file-v3` ghi đĩa theo luồng; đường tương thích
-  v1/v2 giới hạn 100 MiB. Server chỉ lưu metadata, không lưu nội dung file.
+  file **trên 1 GiB**. File lớn dùng `file-v4` để vừa đọc, băm và gửi.
+  Người nhận ghi theo luồng vào nơi đã chọn. **Cài đặt → Nhà phát triển**
+  cho phép thử từ 1 đến 8 kênh mỗi file. Khi database chưa chạy migration hash,
+  nguồn tính SHA-256 trước lời mời. V1/v2 giữ giới hạn 100 MiB. Server chỉ lưu metadata.
 - Cuộc gọi chưa nối API.
 
 Xem [hướng dẫn xác thực](../docs/authentication.md) để chạy backend, cấu hình database có sẵn và kiểm thử.

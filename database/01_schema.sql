@@ -116,7 +116,7 @@ CREATE TABLE dbo.FileTransfers
     SenderId INT NOT NULL,
     FileName NVARCHAR(255) NOT NULL,
     FileSizeBytes BIGINT NOT NULL,
-    Sha256 VARBINARY(32) NOT NULL,
+    Sha256 VARBINARY(32) NULL,
     VerifiedSha256 VARBINARY(32) NULL,
     Status VARCHAR(12) COLLATE Latin1_General_100_BIN2 NOT NULL
         CONSTRAINT DF_FileTransfers_Status DEFAULT 'offered',
@@ -130,9 +130,9 @@ CREATE TABLE dbo.FileTransfers
     CONSTRAINT UQ_FileTransfers_ClientId UNIQUE (SenderId, ClientTransferId),
     CONSTRAINT CK_FileTransfers_FileName CHECK (LEN(LTRIM(RTRIM(FileName))) > 0),
     CONSTRAINT CK_FileTransfers_FileSize CHECK (FileSizeBytes >= 0),
-    CONSTRAINT CK_FileTransfers_Sha256 CHECK (DATALENGTH(Sha256) = 32),
+    CONSTRAINT CK_FileTransfers_Sha256 CHECK (Sha256 IS NULL OR DATALENGTH(Sha256) = 32),
     CONSTRAINT CK_FileTransfers_VerifiedSha256 CHECK
-        ((Status = 'completed' AND VerifiedSha256 IS NOT NULL
+        ((Status = 'completed' AND Sha256 IS NOT NULL AND VerifiedSha256 IS NOT NULL
           AND DATALENGTH(VerifiedSha256) = 32 AND VerifiedSha256 = Sha256)
          OR (Status <> 'completed' AND VerifiedSha256 IS NULL)),
     CONSTRAINT CK_FileTransfers_Status CHECK

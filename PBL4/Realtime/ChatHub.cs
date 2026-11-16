@@ -167,6 +167,9 @@ public sealed class ChatHub(MessageService messages, MessageReceiptService recei
     // Chuyen file sang transferring khi tab gui bao DataChannel file da mo.
     public Task<FileTransferDto> BeginFileTransfer(FileActionDto request) =>
         files.ActAsync(CurrentUserId, Context.ConnectionId, request, "begin");
+    public Task<FileTransferDto> FinalizeFileHash(FinalizeFileHashDto request) =>
+        files.ActAsync(CurrentUserId, Context.ConnectionId,
+            new FileActionDto(request.TransferId, request.ExpectedVersion), "hash", sourceHash: request.Sha256Hex);
     // Huy phien file theo yeu cau mot trong hai endpoint hop le.
     public Task<FileTransferDto> CancelFile(FileActionDto request) =>
         files.ActAsync(CurrentUserId, Context.ConnectionId, request, "cancel");

@@ -11,24 +11,45 @@ const require = createRequire(path.join(process.env.CODEX_NODE_MODULES, 'package
 const { chromium } = require('playwright')
 const run = testRun()
 const errors = []
-const size = 1024 ** 3 + 1
-const directory = await mkdtemp(path.join(tmpdir(), 'pbl4-large-test-'))
-const name = 'large-audio.mp3'
+const size = Number(process.env.FILE_TEST_BYTES || 1024 ** 3 + 1)
+assert.ok(Number.isSafeInteger(size) && size > 1024 ** 3 && size <= 10 * 1024 ** 3)
+const directory = await mkdtemp(path.join(process.env.FILE_TEST_TMPDIR || tmpdir(), 'pbl4-large-test-'))
+const name = 'large-file.bin'
 const source = path.join(directory, name)
 const profile = path.join(directory, 'receiver-profile')
 let browser, receiverContext, monitor
 
 function instrument() {
   window.__channels = []
+  window.__fixtureDirectory = navigator.storage.getDirectory.bind(navigator.storage)
+  window.__temporaryAttempts = 0
+  navigator.storage.getDirectory = async () => {
+    window.__temporaryAttempts++
+    throw new Error('The app must not open OPFS')
+  }
+  const slice = File.prototype.slice
+  File.prototype.slice = function (...args) {
+    if (window.__workerOnly && this.size > 100 * 1024 ** 2)
+      throw new Error('Large sender source should be read in the Worker')
+    return slice.apply(this, args)
+  }
   // Chỉ thay hộp picker native, đĩa OPFS và WebRTC vẫn là API thật.
   window.__savePicker = async options => {
-    const root = await navigator.storage.getDirectory()
+    const root = await window.__fixtureDirectory()
     const folder = await root.getDirectoryHandle('large-test-output', { create: true })
     return folder.getFileHandle(options.suggestedName, { create: true })
   }
   window.showSaveFilePicker = window.__savePicker
-  const estimate = navigator.storage.estimate.bind(navigator.storage)
-  navigator.storage.estimate = () => window.__quotaFull ? Promise.resolve({ quota: 10, usage: 10 }) : estimate()
+  const openWriter = FileSystemFileHandle.prototype.createWritable
+  FileSystemFileHandle.prototype.createWritable = function (...args) {
+    if (window.__denyWriter) throw new DOMException('Test destination is not writable', 'NotAllowedError')
+    return openWriter.apply(this, args)
+  }
+  const write = FileSystemWritableFileStream.prototype.write
+  FileSystemWritableFileStream.prototype.write = async function (chunk) {
+    await write.call(this, chunk)
+    window.__firstWriteAt ??= Date.now()
+  }
   const create = RTCPeerConnection.prototype.createDataChannel
   RTCPeerConnection.prototype.createDataChannel = function (...args) {
     const channel = create.apply(this, args)
@@ -49,13 +70,14 @@ async function login(page, index, peer) {
 
 try {
   const space = await statfs(directory)
-  assert.ok(space.bavail * space.bsize > 4 * size, 'Test requires over 4 GiB free disk space')
+  assert.ok(space.bavail * space.bsize > 2 * size + 1024 ** 3, 'Need space for the source, destination, and Chrome profile')
   // Sinh dữ liệu theo phần, không giữ file >1 GiB trong RAM Node/Playwright.
   const handle = await open(source, 'wx')
   try {
     const block = Buffer.alloc(1024 * 1024)
     for (let index = 0; index < block.length; index++) block[index] = index % 251
     for (let offset = 0; offset < size; offset += block.length) {
+      block.writeBigUInt64LE(BigInt(offset), 0)
       let written = 0
       const length = Math.min(block.length, size - offset)
       while (written < length) written += (await handle.write(block, written, length - written, offset + written)).bytesWritten
@@ -79,8 +101,9 @@ try {
     page.setDefaultTimeout(20000)
   }
   await Promise.all([login(a, 0, 1), login(b, 1, 0)])
+  await a.evaluate(() => { window.__workerOnly = true })
   const quota = await b.evaluate(() => navigator.storage.estimate())
-  assert.ok(quota.quota - quota.usage > 3 * size, 'Test requires quota for temp, OPFS target and write staging')
+  assert.ok(quota.quota - quota.usage > size, 'Test requires quota for the substitute destination')
   console.log(`SETUP receiver uses a temporary persistent profile; available OPFS quota ${quota.quota - quota.usage} bytes`)
   await a.locator('.composer input[type=file]').setInputFiles(source)
   const warning = a.getByRole('dialog', { name: 'Gửi tệp lớn hơn 1 GiB?' })
@@ -113,27 +136,36 @@ try {
   console.log('PASS Files page cancellation sends no offer and preserves selected file')
 
   await a.getByRole('button', { name: 'Gửi lời mời', exact: true }).click()
+  const offerStarted = Date.now()
   await warning.getByRole('button', { name: 'Tiếp tục gửi', exact: true }).click()
-  await card(b).locator(':scope[data-status="offered"]').waitFor({ timeout: 120000 })
+  await card(b).locator(':scope[data-status="offered"]').waitFor({ timeout: 15000 })
+  const offerMilliseconds = Date.now() - offerStarted
   const transfer = (await api('/files', { token: run.tokens[1] })).data.items.find(item => item.fileName === name)
-  assert.deepEqual(transfer.supportedProtocols, ['file-v3'])
+  assert.deepEqual(transfer.supportedProtocols, ['file-v4'])
   assert.equal(transfer.fileSizeBytes, size)
-  assert.equal(transfer.sha256Hex, expectedHash)
+  assert.equal(transfer.sha256Hex, null)
+  console.log('PASS large offer reached the receiver before SHA-256, in ' + offerMilliseconds + ' ms')
   assert.equal(await card(b).getByRole('button', { name: 'Nhận để tải xuống', exact: true }).count(), 0)
   await b.evaluate(() => { window.showSaveFilePicker = undefined })
   await card(b).getByRole('button', { name: 'Nhận file', exact: true }).click()
   await card(b).getByRole('alert').filter({ hasText: 'Tệp lớn cần' }).waitFor()
   assert.equal(await card(b).getAttribute('data-status'), 'offered')
-  await b.evaluate(() => { window.showSaveFilePicker = window.__savePicker; window.__quotaFull = true })
+  await b.evaluate(() => { window.showSaveFilePicker = window.__savePicker; window.__denyWriter = true })
   await card(b).getByRole('button', { name: 'Nhận file', exact: true }).click()
-  await card(b).getByRole('alert').filter({ hasText: 'không đủ chỗ lưu tạm' }).waitFor()
+  await card(b).getByRole('alert').filter({ hasText: 'Test destination is not writable' }).waitFor()
   assert.equal(await card(b).getAttribute('data-status'), 'offered')
-  await b.evaluate(() => { window.__quotaFull = false })
-  console.log('PASS large files cannot downgrade to RAM; insufficient quota rejects before AcceptFile')
-  await card(b).getByRole('button', { name: 'Nhận file', exact: true }).click()
+  await b.evaluate(() => { window.__denyWriter = false })
+  console.log('PASS large files require a writable destination before AcceptFile')
   const started = Date.now()
+  await card(b).getByRole('button', { name: 'Nhận file', exact: true }).click()
   monitor = setInterval(() => void card(b).textContent().then(value => console.log('PROGRESS ' + value.replaceAll('\n', ' ').slice(-240))).catch(() => {}), 30000)
   await card(b).locator(':scope[data-status="transferring"]').waitFor()
+  await b.waitForFunction(() => Number.isFinite(window.__firstWriteAt))
+  const firstWriteMilliseconds = await b.evaluate(() => window.__firstWriteAt) - started
+  const inProgress = (await api('/files', { token: run.tokens[1] })).data.items.find(item => item.id === transfer.id)
+  assert.equal(inProgress.status, 'transferring')
+  assert.equal(inProgress.sha256Hex, null, 'Destination must receive bytes before the source hash is finalized')
+  console.log('PASS destination received its first write in ' + firstWriteMilliseconds + ' ms, before SHA-256 was finalized')
   const notice = b.getByRole('button', { name: 'Đóng thông báo tệp', exact: true })
   if (await notice.isVisible()) await notice.click()
   await b.locator('textarea').fill('Chat vẫn hoạt động khi đang truyền file lớn')
@@ -143,32 +175,31 @@ try {
   await a.getByRole('log').getByText('Chat vẫn hoạt động khi đang truyền file lớn', { exact: true }).waitFor()
   await b.waitForFunction(name => [...document.querySelectorAll('.file-message-card')].some(element =>
     element.textContent.includes(name) && ['completed', 'failed', 'cancelled', 'expired'].includes(element.dataset.status)),
-  name, { timeout: 900000 })
+  name, { timeout: 30 * 60_000 })
   assert.equal(await card(b).getAttribute('data-status'), 'completed', await card(b).textContent())
   await card(a).locator(':scope[data-status="completed"]').waitFor()
+  const seconds = (Date.now() - started) / 1000
   clearInterval(monitor)
   const saved = await b.evaluate(async name => {
-    const root = await navigator.storage.getDirectory()
+    const root = await window.__fixtureDirectory()
     const folder = await root.getDirectoryHandle('large-test-output')
     const file = await (await folder.getFileHandle(name)).getFile()
     const { hashFile } = await import('/src/services/fileStreamProtocol.js')
-    let remaining = 0
-    for await (const key of root.keys()) if (key.startsWith('pbl4-') && key.endsWith('.part')) remaining++
-    return { size: file.size, hash: await hashFile(file, new AbortController().signal), remaining }
+    return { size: file.size, hash: await hashFile(file, new AbortController().signal), temporaryAttempts: window.__temporaryAttempts }
   }, name)
-  assert.deepEqual(saved, { size, hash: expectedHash, remaining: 0 })
-  assert.deepEqual(await a.evaluate(() => window.__channels), ['file-v3-0'])
+  assert.deepEqual(saved, { size, hash: expectedHash, temporaryAttempts: 0 })
+  assert.deepEqual(await a.evaluate(() => window.__channels), ['file-v4-0'])
   const final = (await api('/files', { token: run.tokens[1] })).data.items.find(item => item.id === transfer.id)
   assert.equal(final.status, 'completed')
+  assert.equal(final.sha256Hex, expectedHash)
   assert.equal(final.verifiedSha256Hex, expectedHash)
   assert.deepEqual(errors, [])
-  const seconds = Math.round((Date.now() - started) / 1000)
   if (process.env.FILE_TEST_ARTIFACTS) await writeFile(path.join(process.env.FILE_TEST_ARTIFACTS, 'large-file-result.json'),
-    JSON.stringify({ completedAt: new Date().toISOString(), size, hash: expectedHash, seconds,
-      protocol: 'file-v3', channels: 1, browser: 'Chrome persistent receiver', picker: 'OPFS test substitute',
-      warningChatAndFiles: true, cancelBeforeOffer: true, quotaAndFallbackGuard: true,
-      chatDuringTransfer: true, temporaryFilesRemaining: saved.remaining, errors }, null, 2))
-  console.log(`PASS real one-channel v3 WebRTC + disk: ${size} bytes, SHA-256 verified, chat intact, ${seconds}s`)
+    JSON.stringify({ completedAt: new Date().toISOString(), size, hash: expectedHash, seconds, offerMilliseconds, firstWriteMilliseconds,
+      protocol: 'file-v4', channels: 1, browser: 'Chrome persistent receiver', picker: 'OPFS test substitute',
+      warningChatAndFiles: true, cancelBeforeOffer: true, writableDestinationGuard: true,
+      chatDuringTransfer: true, applicationTemporaryAttempts: saved.temporaryAttempts, errors }, null, 2))
+  console.log(`PASS real one-channel v4 WebRTC + destination: ${size} bytes, SHA-256 verified, chat intact, ${seconds}s`)
 } finally {
   clearInterval(monitor)
   await browser?.close()

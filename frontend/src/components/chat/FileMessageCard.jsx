@@ -54,6 +54,9 @@ export default function FileMessageCard({ transfer, currentUserId }) {
       <span>{percent}% · {formatFileSize(progress)} / {formatFileSize(transfer.fileSizeBytes)}
         {transfer.bytesPerSecond > 0 ? ` · ${formatFileSize(transfer.bytesPerSecond)}/s` : ''}</span>
     </div>}
+    {files.developerMode && transfer.acceptedAt && transfer.channelCount > 0 && <p className="file-message-hint">
+      {transfer.channelCount} kênh{!active && transfer.bytesPerSecond > 0 ? ` · ${formatFileSize(transfer.bytesPerSecond)}/s` : ''}
+    </p>}
     {active && !canRespond && !ownEndpoint && <p className="file-message-hint">Đang xử lý ở tab khác.</p>}
     {transfer.savedLocally && <p className="file-message-hint">Đã lưu thành {transfer.savedName}.</p>}
     {transfer.status === 'completed' && !sending && !transfer.downloadUrl && !transfer.savedLocally &&
