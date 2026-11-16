@@ -3,7 +3,7 @@ import Icon from '../Icon.jsx'
 import { useFileTransfers } from '../../realtime/fileTransferContext.js'
 import { isFileActive } from '../../services/fileTransfers.js'
 import { canSaveFile } from '../../services/fileStorage.js'
-import { LEGACY_MAX_FILE_BYTES } from '../../services/fileProtocol.js'
+import { LEGACY_MAX_FILE_BYTES, PARALLEL_CONNECTIONS_PROTOCOL } from '../../services/fileProtocol.js'
 import { localFileStatus } from '../../services/fileTransferState.js'
 import { fileTypeLabel, formatFileSize } from '../../utils/chatTimeline.js'
 
@@ -55,7 +55,8 @@ export default function FileMessageCard({ transfer, currentUserId }) {
         {transfer.bytesPerSecond > 0 ? ` · ${formatFileSize(transfer.bytesPerSecond)}/s` : ''}</span>
     </div>}
     {files.developerMode && transfer.acceptedAt && transfer.channelCount > 0 && <p className="file-message-hint">
-      {transfer.channelCount} kênh{!active && transfer.bytesPerSecond > 0 ? ` · ${formatFileSize(transfer.bytesPerSecond)}/s` : ''}
+      {transfer.protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL ? '2 kết nối riêng' : `${transfer.channelCount} kênh`}
+      {!active && transfer.bytesPerSecond > 0 ? ` · ${formatFileSize(transfer.bytesPerSecond)}/s` : ''}
     </p>}
     {active && !canRespond && !ownEndpoint && <p className="file-message-hint">Đang xử lý ở tab khác.</p>}
     {transfer.savedLocally && <p className="file-message-hint">Đã lưu thành {transfer.savedName}.</p>}

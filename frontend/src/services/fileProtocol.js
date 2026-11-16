@@ -5,9 +5,13 @@ export const CHUNK_BYTES = 16 * 1024
 export const BUFFER_HIGH = 256 * 1024
 export const BUFFER_LOW = 64 * 1024
 export const MAX_FILE_CHANNELS = 8
+export const PARALLEL_CONNECTION_COUNT = 2
 export const DEFERRED_HASH_PROTOCOL = 'file-v4'
 export const MULTICHANNEL_PROTOCOL = 'file-v5'
-export const STREAM_PROTOCOLS = ['file-v2', 'file-v3', DEFERRED_HASH_PROTOCOL, MULTICHANNEL_PROTOCOL]
+export const PARALLEL_CONNECTIONS_PROTOCOL = 'file-v6'
+export const STREAM_PROTOCOLS = [
+  'file-v2', 'file-v3', DEFERRED_HASH_PROTOCOL, MULTICHANNEL_PROTOCOL, PARALLEL_CONNECTIONS_PROTOCOL,
+]
 
 export async function sha256(buffer) {
   const digest = await crypto.subtle.digest('SHA-256', buffer)

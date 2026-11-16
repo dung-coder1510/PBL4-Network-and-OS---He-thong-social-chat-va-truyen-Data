@@ -144,6 +144,18 @@ tối đa 256 KiB. Kênh 0 báo ACK cho số byte liên tiếp đã ghi. Máy nh
 từ mọi kênh trước khi kiểm tra SHA-256 và chốt file. Lỗi trên một kênh kết thúc
 phiên. Đo riêng đường trực tiếp và TURN để chọn số kênh phù hợp.
 
+### Thử hai kết nối WebRTC riêng
+
+Bật **Hai kết nối WebRTC riêng** trong **Cài đặt → Nhà phát triển**. Lượt gửi
+tiếp theo đề nghị `file-v6` với hai `RTCPeerConnection` và một DataChannel
+trên mỗi kết nối. SignalR dùng `ConnectionIndex` 0 hoặc 1 để chuyển SDP và
+ICE. Phiên chỉ bắt đầu gửi khi cả hai kênh báo `READY`. Cách chia khối,
+cửa sổ ACK, ghi vào một file và xác minh SHA-256 dùng chung với v5.
+
+Tab nhận chốt v6 nếu hỗ trợ. Nếu tab chỉ hỗ trợ v5 hoặc chế độ một kênh,
+hai bên dùng giao thức tương thích đã ghi trong lời mời. Tắt công tắc
+để thử lại bằng nhiều kênh chung một kết nối.
+
 ## Giao thức file-v1 tương thích
 
 - Một file trên một DataChannel `file-v1`, ordered và reliable.

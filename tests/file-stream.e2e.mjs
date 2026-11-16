@@ -17,6 +17,7 @@ const temporaryFiles = new Set()
 function instrument() {
   window.__channels = []
   window.__activeFileChannels = []
+  window.__fileConnections = []
   window.__picker = 'save'
   window.__pickerUsedGesture = false
   window.__holdWrites = false
@@ -44,6 +45,7 @@ function instrument() {
     if (channel.label.startsWith('file-')) {
       window.__channels.push(channel.label)
       window.__activeFileChannels.push(channel)
+      window.__fileConnections.push(this)
     }
     return channel
   }
@@ -218,11 +220,47 @@ try {
   assert.equal((await savedHash(b, 'multichannel-broken.bin')).size, 0)
   console.log('PASS closing one of eight channels fails the complete transfer and leaves the output uncommitted')
 
+  await openDeveloperSettings(a)
+  const separateConnections = a.getByRole('switch', { name: 'Dùng hai kết nối WebRTC riêng' })
+  assert.equal(await separateConnections.getAttribute('aria-checked'), 'false')
+  await separateConnections.click()
+  assert.equal(await channelSelect.inputValue(), '2')
+  assert.equal(await channelSelect.isDisabled(), true)
+  await openChat(a, 1)
+
+  const previousChannels = await a.evaluate(() => window.__channels.length)
+  const separateName = 'separate-connections-large.bin'
+  await offer(a, b, separateName, largeSample)
+  await card(b, separateName).getByRole('button', { name: 'Nhận file', exact: true }).click()
+  await completed(a, b, separateName)
+  assert.deepEqual(await a.evaluate(start => ({
+    labels: window.__channels.slice(start),
+    connections: new Set(window.__fileConnections.slice(start)).size,
+  }), previousChannels), { labels: ['file-v6-0', 'file-v6-1'], connections: 2 })
+  await card(a, separateName).getByText(/^2 kết nối riêng/).waitFor()
+  assert.deepEqual(await savedHash(b, separateName), { size: sizeAboveLegacyLimit, hash: largeHash })
+  console.log('PASS two separate WebRTC connections save a file over 100 MiB with matching SHA-256')
+
+  await b.evaluate(() => { window.__holdWrites = true })
+  const brokenName = 'separate-connection-broken.bin'
+  await offer(a, b, brokenName, sample)
+  await card(b, brokenName).getByRole('button', { name: 'Nhận file', exact: true }).click()
+  await card(a, brokenName).locator(':scope[data-status="transferring"]').waitFor()
+  await a.evaluate(() => window.__fileConnections.at(-1).close())
+  for (const page of [a, b]) await card(page, brokenName).locator(':scope[data-status="failed"]').waitFor()
+  await b.evaluate(() => { window.__holdWrites = false })
+  assert.equal((await savedHash(b, brokenName)).size, 0)
+  assert.equal(await a.evaluate(() => window.__fileConnections.slice(-2).every(pc => pc.connectionState === 'closed')), true)
+  console.log('PASS closing one WebRTC connection ends both connections and aborts the unfinished file')
+
   await a.reload({ waitUntil: 'networkidle' })
   await login(a, 0, 1)
   await openDeveloperSettings(a)
   assert.equal(await developerSwitch.getAttribute('aria-checked'), 'true')
+  assert.equal(await separateConnections.getAttribute('aria-checked'), 'true')
+  await separateConnections.click()
   assert.equal(await channelSelect.inputValue(), '8')
+  assert.equal(await channelSelect.isDisabled(), false)
   await developerSwitch.click()
   await channelSelect.waitFor({ state: 'detached' })
   await openChat(a, 1)

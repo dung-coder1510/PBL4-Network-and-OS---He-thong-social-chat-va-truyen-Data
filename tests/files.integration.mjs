@@ -111,6 +111,7 @@ try {
   assert.equal(settings.data.maximumFileBytes, 10 * 1024 ** 3)
   assert.equal(settings.data.legacyMaximumFileBytes, 100 * 1024 ** 2)
   assert.equal(settings.data.maximumFileChannels, 8)
+  assert.equal(settings.data.supportsParallelFileConnections, true)
   const parallelOffer = overrides => offer({ supportedProtocols: ['file-v5', 'file-v1', 'file-v2'], requestedChannelCount: 8, ...overrides })
   await assert.rejects(sender.invoke('OfferFile', parallelOffer({ requestedChannelCount: 9 })))
   await assert.rejects(sender.invoke('OfferFile', parallelOffer({ supportedProtocols: ['file-v2'] })))
@@ -129,6 +130,42 @@ try {
   assert.equal(oneChannel.channelCount, 1)
   await sender.invoke('CancelFile', action(oneChannel))
   check('Multichannel offers are capped at eight, accept only what was offered, and support one-channel fallback')
+
+  const separateOffer = overrides => offer({
+    supportedProtocols: ['file-v6', 'file-v5', 'file-v1', 'file-v2'], requestedChannelCount: 2, ...overrides,
+  })
+  await assert.rejects(sender.invoke('OfferFile', separateOffer({ requestedChannelCount: 1 })))
+  const separate = await sender.invoke('OfferFile', separateOffer())
+  await assert.rejects(receiver.invoke('AcceptFile', { ...action(separate), protocolVersion: 'file-v6', channelCount: 1 }))
+  const acceptedSeparate = await receiver.invoke('AcceptFile', { ...action(separate), protocolVersion: 'file-v6', channelCount: 2 })
+  const separateSignal = (connectionIndex, kind, payload = 'v=0\r\n') =>
+    ({ transferId: separate.id, connectionIndex, kind, payload })
+  for (const connectionIndex of [-1, 2])
+    await assert.rejects(sender.invoke('SendFileSignal', separateSignal(connectionIndex, 'offer')))
+  await sender.invoke('SendFileSignal', separateSignal(0, 'offer'))
+  await assert.rejects(sender.invoke('SendFileSignal', separateSignal(0, 'offer')))
+  await assert.rejects(receiver.invoke('SendFileSignal', separateSignal(1, 'answer')))
+  await receiver.invoke('SendFileSignal', separateSignal(0, 'answer'))
+  await assert.rejects(sender.invoke('BeginFileTransfer', action(acceptedSeparate)))
+  const forwarded = []
+  const recordSignal = signal => { if (signal.transferId === separate.id) forwarded.push(signal) }
+  receiver.on('FileSignal', recordSignal)
+  await sender.invoke('SendFileSignal', separateSignal(1, 'ice', '{"candidate":"test"}'))
+  await sender.invoke('SendFileSignal', separateSignal(1, 'offer'))
+  await receiver.invoke('SendFileSignal', separateSignal(1, 'answer'))
+  await waitFor(() => forwarded, signals => signals.length === 2)
+  receiver.off('FileSignal', recordSignal)
+  assert.deepEqual(forwarded.map(signal => [signal.kind, signal.connectionIndex]), [['ice', 1], ['offer', 1]])
+  const transferringSeparate = await sender.invoke('BeginFileTransfer', action(acceptedSeparate))
+  await sender.invoke('CancelFile', action(transferringSeparate))
+  const separateFallback = await sender.invoke('OfferFile', separateOffer())
+  const acceptedFallback = await receiver.invoke('AcceptFile', {
+    ...action(separateFallback), protocolVersion: 'file-v5', channelCount: 2,
+  })
+  await assert.rejects(sender.invoke('SendFileSignal', { ...separateSignal(1, 'offer'), transferId: acceptedFallback.id }))
+  await sender.invoke('CancelFile', action(acceptedFallback))
+  check('Separate connections negotiate independently and wait for both answers; v5 fallback uses only index zero')
+
   await assert.rejects(sender.invoke('OfferFile', offer({
     fileSizeBytes: 10 * 1024 ** 3 + 1, supportedProtocols: ['file-v3'],
   })))

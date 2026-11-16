@@ -21,8 +21,9 @@ function readDeveloperSettings() {
     const saved = JSON.parse(localStorage.getItem(DEVELOPER_SETTINGS_KEY))
     const count = saved?.fileChannelCount
     return { enabled: saved?.enabled === true,
-      fileChannelCount: Number.isInteger(count) && count >= 1 && count <= MAX_FILE_CHANNELS ? count : 1 }
-  } catch { return { enabled: false, fileChannelCount: 1 } }
+      fileChannelCount: Number.isInteger(count) && count >= 1 && count <= MAX_FILE_CHANNELS ? count : 1,
+      parallelFileConnections: saved?.parallelFileConnections === true }
+  } catch { return { enabled: false, fileChannelCount: 1, parallelFileConnections: false } }
 }
 
 function App() {
@@ -140,7 +141,8 @@ function App() {
     <ChatRealtimeProvider key={session.sessionId} token={session.accessToken}
       user={session.user} onSessionExpired={sessionExpired}>
       <FileTransferProvider token={session.accessToken} user={session.user} developerMode={developerSettings.enabled}
-        preferredChannelCount={developerSettings.enabled ? developerSettings.fileChannelCount : null}>
+        preferredChannelCount={developerSettings.enabled ? developerSettings.fileChannelCount : null}
+        parallelFileConnections={developerSettings.enabled && developerSettings.parallelFileConnections}>
       <AppShell currentPage={visiblePage} onLogout={logout} onNavigate={navigate} user={session.user} loggingOut={loggingOut}>
         {logoutError && <p className="auth-workspace-error" role="alert">{logoutError}</p>}
         {visiblePage === 'settings'

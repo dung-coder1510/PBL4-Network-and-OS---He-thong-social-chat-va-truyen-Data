@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import Avatar from '../components/Avatar.jsx'
 import Icon from '../components/Icon.jsx'
-import { MAX_FILE_CHANNELS } from '../services/fileProtocol.js'
+import { MAX_FILE_CHANNELS, PARALLEL_CONNECTION_COUNT } from '../services/fileProtocol.js'
 
 
 function AppearanceSettings({ onThemeChange, theme }) {
@@ -33,10 +33,17 @@ function DeveloperSettings({ settings, onChange }) {
     {settings.enabled && <>
       <div className="settings-card">
         <div className="setting-row">
+          <div><strong>Hai kết nối WebRTC riêng</strong><p>Mỗi kết nối dùng một kênh cho cùng file.</p></div>
+          <button className="toggle" type="button" role="switch" aria-label="Dùng hai kết nối WebRTC riêng"
+            aria-checked={settings.parallelFileConnections}
+            onClick={() => onChange({ ...settings, parallelFileConnections: !settings.parallelFileConnections })} />
+        </div>
+        <div className="setting-row">
           <div><label htmlFor="file-channel-count"><strong>Số kênh truyền file</strong></label>
             <p>Áp dụng từ lượt gửi tiếp theo. Hai máy chốt số kênh khi nhận lời mời.</p>
           </div>
-          <select id="file-channel-count" value={settings.fileChannelCount}
+          <select id="file-channel-count" disabled={settings.parallelFileConnections}
+            value={settings.parallelFileConnections ? PARALLEL_CONNECTION_COUNT : settings.fileChannelCount}
             onChange={event => onChange({ ...settings, fileChannelCount: Number(event.target.value) })}>
             {Array.from({ length: MAX_FILE_CHANNELS }, (_, index) => index + 1).map(count =>
               <option key={count} value={count}>{count === 1 ? '1 kênh (mặc định)' : `${count} kênh`}</option>)}

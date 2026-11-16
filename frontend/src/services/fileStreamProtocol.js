@@ -1,7 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js'
 import {
   BUFFER_HIGH, CHUNK_BYTES, DEFERRED_HASH_PROTOCOL, LEGACY_MAX_FILE_BYTES, MAX_FILE_BYTES, MAX_FILE_CHANNELS,
-  MULTICHANNEL_PROTOCOL, encodeChunk, waitForBuffer,
+  MULTICHANNEL_PROTOCOL, PARALLEL_CONNECTION_COUNT, PARALLEL_CONNECTIONS_PROTOCOL, encodeChunk, waitForBuffer,
 } from './fileProtocol.js'
 
 export const ACK_WINDOW = 512 * 1024
@@ -10,10 +10,11 @@ const DIRECT_WRITE_BYTES = 256 * 1024
 const DIRECT_ACK_WINDOW = 2 * 1024 ** 2
 const DIRECT_SEND_BUFFER = 1024 ** 2
 const FILE_BATCH_BYTES = 512 * 1024
+const BATCHED_PROTOCOLS = [DEFERRED_HASH_PROTOCOL, MULTICHANNEL_PROTOCOL, PARALLEL_CONNECTIONS_PROTOCOL]
 
 export function streamHeaderBytes(protocolVersion = 'file-v2') {
   if (protocolVersion === 'file-v2') return 4
-  if (protocolVersion === 'file-v3' || protocolVersion === DEFERRED_HASH_PROTOCOL || protocolVersion === MULTICHANNEL_PROTOCOL) return 8
+  if (protocolVersion === 'file-v3' || BATCHED_PROTOCOLS.includes(protocolVersion)) return 8
   throw new Error('Giao thức truyền file không hợp lệ.')
 }
 
@@ -49,9 +50,10 @@ function validateSize(size, protocolVersion) {
 }
 
 function validateChannelCount(count, protocolVersion) {
-  const valid = protocolVersion === MULTICHANNEL_PROTOCOL
-    ? Number.isInteger(count) && count >= 1 && count <= MAX_FILE_CHANNELS
-    : count === 1
+  let valid = count === 1
+  if (protocolVersion === MULTICHANNEL_PROTOCOL)
+    valid = Number.isInteger(count) && count >= 1 && count <= MAX_FILE_CHANNELS
+  if (protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL) valid = count === PARALLEL_CONNECTION_COUNT
   if (!valid) throw new Error('Số kênh không hợp lệ cho giao thức đã chọn.')
 }
 
@@ -122,7 +124,7 @@ export function readStreamControl(text, transferId, channel = 0) {
 export function createStreamSender({ channels, transferId, signal, onProgress, protocolVersion = 'file-v2' }) {
   const header = streamHeaderBytes(protocolVersion)
   validateChannelCount(channels.length, protocolVersion)
-  const batched = protocolVersion === DEFERRED_HASH_PROTOCOL || protocolVersion === MULTICHANNEL_PROTOCOL
+  const batched = BATCHED_PROTOCOLS.includes(protocolVersion)
   const windowBytes = batched ? DIRECT_ACK_WINDOW : ACK_WINDOW
   const sendBuffer = batched ? Math.floor(DIRECT_SEND_BUFFER / channels.length) : BUFFER_HIGH
   const changes = new EventTarget()
@@ -223,7 +225,8 @@ export function createStreamSender({ channels, transferId, signal, onProgress, p
 export function createStreamReceiver({ size, signal, write, acknowledge, onProgress, protocolVersion = 'file-v2', channelCount = 1 }) {
   validateSize(size, protocolVersion)
   validateChannelCount(channelCount, protocolVersion)
-  const batched = protocolVersion === DEFERRED_HASH_PROTOCOL || protocolVersion === MULTICHANNEL_PROTOCOL
+  const batched = BATCHED_PROTOCOLS.includes(protocolVersion)
+  const requiresChannelEnds = protocolVersion === MULTICHANNEL_PROTOCOL || protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL
   const windowBytes = batched ? DIRECT_ACK_WINDOW : ACK_WINDOW
   const ackBytes = batched ? DIRECT_WRITE_BYTES : ACK_INTERVAL
   const nextOffsets = Array.from({ length: channelCount }, (_, index) => index * CHUNK_BYTES)
@@ -292,7 +295,7 @@ export function createStreamReceiver({ size, signal, write, acknowledge, onProgr
       return endedChannels.size === channelCount
     },
     async finish() {
-      if (ended || received !== size || (protocolVersion === MULTICHANNEL_PROTOCOL && endedChannels.size !== channelCount))
+      if (ended || received !== size || (requiresChannelEnds && endedChannels.size !== channelCount))
         throw new Error('Tệp chưa nhận đủ byte hoặc END lặp.')
       ended = true
       await queue

@@ -10,7 +10,7 @@ public sealed record FileActionDto(string TransferId, string ExpectedVersion, st
 public sealed record FinalizeFileHashDto(string TransferId, string ExpectedVersion, string Sha256Hex);
 public sealed record CompleteFileDto(string TransferId, string ExpectedVersion,
     long ReceivedBytes, string VerifiedSha256Hex);
-public sealed record FileSignalDto(string TransferId, string Kind, string Payload);
+public sealed record FileSignalDto(string TransferId, string Kind, string Payload, int ConnectionIndex = 0);
 public sealed record FileTransferDto(string Id, Guid ClientTransferId, string ConversationId,
     int SenderId, int ReceiverId, string FileName, long FileSizeBytes, string? Sha256Hex,
     string? VerifiedSha256Hex, string Status, DateTime CreatedAt, DateTime? AcceptedAt,
