@@ -19,8 +19,11 @@ const hash = digest(sample)
 let browser
 
 function instrument() {
-  window.showSaveFilePicker = async options =>
-    (await navigator.storage.getDirectory()).getFileHandle(options.suggestedName, { create: true })
+  window.__relayPickerCalls = 0
+  window.showSaveFilePicker = async options => {
+    window.__relayPickerCalls++
+    return (await navigator.storage.getDirectory()).getFileHandle(options.suggestedName, { create: true })
+  }
   const Peer = window.RTCPeerConnection
   window.RTCPeerConnection = class extends Peer {
     constructor(...args) {
@@ -213,6 +216,7 @@ try {
   await Promise.all([completed(c, fallback), completed(d, fallback)])
   assert.equal(await card(d, fallback).count(), 1)
   assert.equal(await card(d, fallback).getAttribute('data-transfer-id'), id)
+  assert.equal(await d.evaluate(() => window.__relayPickerCalls), 1)
   await assertSaved(d, fallback, shorter.length, digest(shorter))
   console.log('PASS browser WebRTC failure switches the same chat card to HTTPS and saves the correct file')
 } finally {
