@@ -171,6 +171,7 @@ Khi vùng đệm đầy, backend chờ luồng tải xuống giải phóng chỗ
 Nginx, hệ điều hành và trình duyệt có bộ đệm riêng.
 
 B ghi file theo luồng và kiểm tra đủ byte và SHA-256 trước khi đóng file đích.
+Bên gửi tính SHA-256 trước khi tải lên bằng HTTPS.
 B gửi một biên nhận sau khi lưu. Biên nhận dùng khóa riêng của phiên để hoàn tất
 được cả khi JWT hết hạn trong lúc hai luồng HTTP đang chạy. Nếu mất một luồng,
 phiên dừng và gửi lại từ đầu. SQL lưu metadata và trạng thái, còn nội dung file
@@ -180,6 +181,8 @@ API dưới `/api/v1/files` dùng `POST /relay` để tạo lời mời, `POST /
 để chuyển một phiên WebRTC, `POST /{id}/relay/accept` để nhận và `DELETE /{id}/relay`
 để kết thúc sớm. Hai luồng `PUT` và `GET` dùng chung `/{id}/relay/content`.
 B gửi biên nhận tới `POST /{id}/relay/complete`.
+Khi frontend và API ở hai origin, khai báo origin frontend trong `Cors:AllowedOrigins`
+để trình duyệt đọc header `X-File-SHA256`. [Cấu hình CORS trong ASP.NET Core](https://learn.microsoft.com/en-us/aspnet/core/security/cors#set-the-exposed-response-headers)
 
 Với cấu hình triển khai Nginx hiện có, thêm `location` sau trong `server` đang
 phục vụ `/api/`. Giữ đường dẫn request và tắt gom body ở cả hai chiều trên route

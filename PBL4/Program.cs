@@ -45,6 +45,7 @@ namespace PBL4
                     policy => policy.WithOrigins(allowedOrigins)
                                     .AllowAnyMethod()
                                     .AllowAnyHeader()
+                                    .WithExposedHeaders("X-File-SHA256")
                                     .AllowCredentials());
             });
             builder.Services.AddDbContext<AppDbContext>(options =>

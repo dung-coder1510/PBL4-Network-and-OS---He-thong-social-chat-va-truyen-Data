@@ -64,6 +64,12 @@ const card = (page, fileName) => page.locator('.file-message-card').filter({ has
 const completed = (page, fileName) =>
   card(page, fileName).locator(':scope[data-status="completed"][data-transport="https"]').waitFor({ timeout: 150000 })
 
+async function chooseRelayFile(page, file) {
+  const chooser = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: 'Gửi qua máy chủ', exact: true }).click()
+  await (await chooser).setFiles(file)
+}
+
 async function assertSaved(page, fileName, bytes, expectedHash) {
   const result = await page.evaluate(async name => {
     const file = await (await (await navigator.storage.getDirectory()).getFileHandle(name)).getFile()
@@ -118,6 +124,15 @@ async function proveEarlyBytes(conversationId) {
     const first = await reader.read()
     assert.ok(first.value.byteLength > 0)
     assert.equal(upload.writableEnded, false)
+    const receipt = { transferId: transfer.id, expectedVersion: transfer.version,
+      receivedBytes: payload.length, verifiedSha256Hex: sha }
+    assert.equal((await api(url + '/relay/complete', { method: 'POST', body: receipt })).status, 403)
+    const receiptAttempt = fetch(origin + '/api/v1' + url + '/relay/complete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-File-Relay-Key': key },
+      body: JSON.stringify(receipt), signal: AbortSignal.timeout(10000),
+    })
+    assert.equal(await Promise.race([receiptAttempt.then(() => true),
+      new Promise(resolve => setTimeout(() => resolve(false), 150))]), false)
     upload.end(payload.subarray(64000))
     const received = createHash('sha256').update(first.value)
     let size = first.value.byteLength
@@ -129,12 +144,7 @@ async function proveEarlyBytes(conversationId) {
     }
     assert.equal(size, payload.length)
     assert.equal(received.digest('hex'), sha)
-    const receipt = { transferId: transfer.id, expectedVersion: transfer.version, receivedBytes: size, verifiedSha256Hex: sha }
-    assert.equal((await api(url + '/relay/complete', { method: 'POST', body: receipt })).status, 403)
-    const confirmation = await fetch(origin + '/api/v1' + url + '/relay/complete', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-File-Relay-Key': key },
-      body: JSON.stringify(receipt), signal: AbortSignal.timeout(10000),
-    })
+    const confirmation = await receiptAttempt
     assert.equal(confirmation.status, 200)
     assert.equal((await confirmation.json()).status, 'completed')
     assert.equal(await result, 200)
@@ -154,9 +164,18 @@ try {
   const manual = await openPair(true)
   const [a, b] = manual.pages
   for (const page of manual.pages) await page.evaluate(() => { window.__failPeer = true })
-  const chooser = a.waitForEvent('filechooser')
-  await a.getByRole('button', { name: 'Gửi qua máy chủ', exact: true }).click()
-  await (await chooser).setFiles(source)
+  const cancelName = 'relay-cancelled.bin'
+  await chooseRelayFile(a, { name: cancelName, mimeType: 'application/octet-stream', buffer: sample.subarray(0, 120_000) })
+  await b.evaluate(() => { window.__holdWriter = true })
+  await card(b, cancelName).getByRole('button', { name: 'Nhận file', exact: true }).click()
+  await card(b, cancelName).locator(':scope[data-status="transferring"]').waitFor()
+  await card(b, cancelName).getByRole('button', { name: 'Hủy', exact: true }).click()
+  await Promise.all([a, b].map(page => card(page, cancelName).locator(':scope[data-status="cancelled"]').waitFor()))
+  await b.evaluate(() => { window.__holdWriter = false })
+  await assertSaved(b, cancelName, 0, digest(Buffer.alloc(0)))
+  console.log('PASS the browser receiver can cancel an active relay and leaves no committed content')
+
+  await chooseRelayFile(a, source)
   const incoming = card(b, name)
   await incoming.getByText('Qua máy chủ', { exact: true }).waitFor()
   await b.evaluate(() => { window.__holdWriter = true })
