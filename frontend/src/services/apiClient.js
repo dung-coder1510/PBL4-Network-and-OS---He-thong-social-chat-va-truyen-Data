@@ -1,4 +1,5 @@
 const API_BASE = (import.meta.env?.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
+const FILE_CONTENT_BASE = (import.meta.env?.VITE_FILE_RELAY_CONTENT_BASE_URL || API_BASE).replace(/\/$/, '')
 
 // Goi REST API co JWT, JSON va timeout 15 giay; tra JSON/undefined cho 204 hoac nem loi co status/code.
 // Ket hop AbortSignal cua caller voi timeout de huy request khi doi trang/logout hoac cho qua lau.
@@ -36,7 +37,7 @@ export async function request(path, { method = 'GET', body, token, signal, heade
 
 // Fetch giữ body nhị phân theo luồng và dùng tín hiệu hủy của riêng phiên truyền.
 export async function requestFileContent(path, { method = 'GET', body, token, signal, headers }) {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${FILE_CONTENT_BASE}${path}`, {
     method, body, signal, cache: 'no-store',
     headers: { Authorization: `Bearer ${token}`, ...headers },
   })

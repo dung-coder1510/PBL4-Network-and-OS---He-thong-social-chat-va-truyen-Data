@@ -205,6 +205,13 @@ location ~ ^/api/v1/files/[0-9]+/relay/content$ {
 }
 ```
 
+Nếu tên miền chính đi qua proxy ngoài, có thể đặt
+`VITE_FILE_RELAY_CONTENT_BASE_URL=https://rt.wiremess.io.vn/api/v1` khi build
+frontend để truyền byte qua tên miền trực tiếp. Biến này áp dụng cho `PUT` và
+`GET` trên `/{id}/relay/content`. Lời mời, trạng thái và biên nhận dùng API
+theo `VITE_API_BASE_URL`. Tên miền trực tiếp cần cấu hình route Nginx ở trên
+và khai báo origin frontend trong `Cors:AllowedOrigins` của backend.
+
 ## Giao thức file-v1 tương thích
 
 - Một file trên một DataChannel `file-v1`, ordered và reliable.
