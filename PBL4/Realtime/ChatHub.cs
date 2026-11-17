@@ -157,10 +157,10 @@ public sealed class ChatHub(MessageService messages, MessageReceiptService recei
 
     // Tao loi moi gui file va luu metadata; byte file di qua WebRTC rieng voi text.
     public Task<FileTransferDto> OfferFile(OfferFileDto request) =>
-        files.OfferAsync(CurrentUserId, Context.ConnectionId, request);
+        files.OfferAsync(CurrentUserId, Context.ConnectionId, request, Context.User!.FindFirst("sid")?.Value);
     // Rang buoc tab nhan chap nhan loi moi; service kiem tra quyen va RowVersion.
     public Task<FileTransferDto> AcceptFile(FileActionDto request) =>
-        files.ActAsync(CurrentUserId, Context.ConnectionId, request, "accept");
+        files.ActAsync(CurrentUserId, Context.ConnectionId, request, "accept", sessionId: Context.User!.FindFirst("sid")?.Value);
     // Ghi quyet dinh tu choi cua nguoi nhan va thong bao trang thai file.
     public Task<FileTransferDto> RejectFile(FileActionDto request) =>
         files.ActAsync(CurrentUserId, Context.ConnectionId, request, "reject");

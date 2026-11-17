@@ -17,7 +17,7 @@ export default function ConversationThread({ conversation, loading, error, messa
   currentUserId, historyLoading, historyError, hasOlder, connectionState, connectionError,
   peerTyping, onTypingChange, onBack, onRetry, onRetryHistory, onLoadOlder, onSend,
   onRetryMessage, onReconnect, onCreate, onSendFile, textState, onAddContact,
-  transfers = [], fileHistoryLoading, fileHistoryError }) {
+  transfers = [], fileHistoryLoading, fileHistoryError, relayAvailable }) {
   const peer = conversation?.peer
   const messageList = useRef(null)
   const draftInput = useRef(null)
@@ -25,6 +25,7 @@ export default function ConversationThread({ conversation, loading, error, messa
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
   const fileInput = useRef(null)
+  const fileTransport = useRef('webrtc')
   const [sendingFile, setSendingFile] = useState(false)
   const [fileError, setFileError] = useState('')
   const timeline = chatTimeline(messages, transfers)
@@ -88,17 +89,24 @@ export default function ConversationThread({ conversation, loading, error, messa
   // Gui loi moi file cho dung nguoi dang chat, giu nguyen ban nhap va reset input de chon lai cung file.
   async function selectFile(event) {
     const file = event.target.files?.[0]
+    const transport = fileTransport.current
+    fileTransport.current = 'webrtc'
     event.target.value = ''
     if (!file || sendingFile) return
     setSendingFile(true)
     setFileError('')
     try {
-      await onSendFile(file)
+      await onSendFile(file, transport)
     } catch (failure) {
       setFileError(failure.message || 'Chưa gửi được lời mời nhận tệp.')
     } finally {
       setSendingFile(false)
     }
+  }
+
+  function chooseFile(transport) {
+    fileTransport.current = transport
+    fileInput.current?.click()
   }
 
   const presenceLabel = peer?.isOnline ? 'Đang hoạt động'
@@ -195,13 +203,18 @@ export default function ConversationThread({ conversation, loading, error, messa
               <div className="composer-bottom">
                 <div className="composer-file-tools">
                   <input ref={fileInput} type="file" hidden aria-label={`Chọn tệp gửi cho ${peer.displayName}`}
-                    disabled={sendingFile || peer.isDisabled || connectionState !== 'connected'} onChange={selectFile} />
+                    disabled={sendingFile || peer.isDisabled || (!relayAvailable && connectionState !== 'connected')}
+                    onChange={selectFile} />
                   <button className="btn composer-file-button" type="button"
-                    onClick={() => fileInput.current?.click()}
+                    onClick={() => chooseFile('webrtc')}
                     disabled={sendingFile || peer.isDisabled || connectionState !== 'connected'}
-                    title="Gửi tệp tối đa 10 GiB" aria-label={`Gửi file cho ${peer.displayName}`}>
+                    aria-label={`Gửi file cho ${peer.displayName}`}>
                     <Icon name="paperclip" size="ico-sm" />{sendingFile ? 'Đang chuẩn bị…' : 'Gửi file'}
                   </button>
+                  {relayAvailable && <button className="btn composer-file-button" type="button"
+                    disabled={sendingFile || peer.isDisabled} onClick={() => chooseFile('https')}>
+                    Gửi qua máy chủ
+                  </button>}
                   <span className="composer-count">{draft.length}/4000</span>
                 </div>
                 <button className="send-btn" type="submit" disabled={!draft.trim() || sending || peer.isDisabled || connectionState !== 'connected'} aria-label="Gửi tin nhắn"><Icon name="send" /></button>

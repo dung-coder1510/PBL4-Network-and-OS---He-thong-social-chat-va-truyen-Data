@@ -135,7 +135,14 @@ try {
     body: { peerUserId: run.users[1].id } })).status, 201)
   browser = await chromium.launch({ channel: 'chrome', headless: true })
   const contexts = await Promise.all([browser.newContext(), browser.newContext()])
-  for (const context of contexts) await context.addInitScript(instrument)
+  for (const context of contexts) {
+    await context.addInitScript(instrument)
+    // Keep the WebRTC failure-path checks on a server that advertises no HTTPS relay.
+    await context.route('**/api/v1/files/configuration', async route => {
+      const response = await route.fetch()
+      await route.fulfill({ response, json: { ...await response.json(), supportsHttpFileRelay: false } })
+    })
+  }
   const [a, b] = await Promise.all(contexts.map(context => context.newPage()))
   for (const page of [a, b]) {
     page.on('pageerror', error => errors.push(error.message))

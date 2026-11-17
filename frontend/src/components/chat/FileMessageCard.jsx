@@ -13,10 +13,12 @@ export default function FileMessageCard({ transfer, currentUserId }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const sending = transfer.senderId === currentUserId
-  const ownEndpoint = (sending ? transfer.senderConnectionId : transfer.receiverConnectionId) === files.connectionId
+  const relay = transfer.transport === 'https'
+  const ownEndpoint = relay ? transfer.localRelayEndpoint
+    : (sending ? transfer.senderConnectionId : transfer.receiverConnectionId) === files.connectionId
   const active = isFileActive(transfer)
   const canRespond = !sending && transfer.status === 'offered'
-  const disabled = busy || files.connectionState !== 'connected' || transfer.localFailure
+  const disabled = busy || (!relay && files.connectionState !== 'connected') || transfer.localFailure
   const labels = {
     offered: sending ? 'Chờ người nhận' : 'Lời mời nhận tệp', accepted: 'Đang kết nối…',
     transferring: sending ? 'Đang gửi…' : 'Đang nhận…',
@@ -41,12 +43,14 @@ export default function FileMessageCard({ transfer, currentUserId }) {
 
   return <>
     <article className={`bubble file-message-card${sending ? ' outgoing' : ''}`}
-    data-transfer-id={transfer.id} data-status={transfer.status} aria-label={`Tệp ${transfer.fileName}`}>
+    data-transfer-id={transfer.id} data-status={transfer.status} data-transport={transfer.transport}
+    aria-label={`Tệp ${transfer.fileName}`}>
     <div className="file-message-main">
       <span className={`file-message-icon type-${type.toLowerCase()}`} aria-hidden="true">{type}</span>
       <div className="file-message-info">
         <strong className="file-message-name" title={transfer.fileName}>{transfer.fileName}</strong>
         <span className="file-message-size">{formatFileSize(transfer.fileSizeBytes)}</span>
+        {relay && <span className="file-message-size">Qua máy chủ</span>}
       </div>
     </div>
     {active && transfer.transferredBytes !== undefined && <div className="file-message-progress">
@@ -54,7 +58,7 @@ export default function FileMessageCard({ transfer, currentUserId }) {
       <span>{percent}% · {formatFileSize(progress)} / {formatFileSize(transfer.fileSizeBytes)}
         {transfer.bytesPerSecond > 0 ? ` · ${formatFileSize(transfer.bytesPerSecond)}/s` : ''}</span>
     </div>}
-    {files.developerMode && transfer.acceptedAt && transfer.channelCount > 0 && <p className="file-message-hint">
+    {!relay && files.developerMode && transfer.acceptedAt && transfer.channelCount > 0 && <p className="file-message-hint">
       {transfer.protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL ? '2 kết nối riêng' : `${transfer.channelCount} kênh`}
       {!active && transfer.bytesPerSecond > 0 ? ` · ${formatFileSize(transfer.bytesPerSecond)}/s` : ''}
     </p>}
@@ -67,7 +71,7 @@ export default function FileMessageCard({ transfer, currentUserId }) {
       {canRespond && <>
         <button type="button" className="file-card-button primary" disabled={disabled}
           onClick={() => act('AcceptFile')}>Nhận file</button>
-        {canSaveFile(transfer) && transfer.fileSizeBytes <= LEGACY_MAX_FILE_BYTES && <button type="button" className="file-card-button" disabled={disabled}
+        {!relay && canSaveFile(transfer) && transfer.fileSizeBytes <= LEGACY_MAX_FILE_BYTES && <button type="button" className="file-card-button" disabled={disabled}
           onClick={() => act('AcceptFile', { legacy: true })}>Nhận để tải xuống</button>}
         <button type="button" className="file-card-button" disabled={disabled}
           onClick={() => act('RejectFile')}>Từ chối</button>

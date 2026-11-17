@@ -57,12 +57,13 @@ export default function FilesPage({ token, user, onSessionExpired }) {
   return (
     <div className="page">
       <div className="page-header"><div><h1>Tệp đã chia sẻ</h1>
-        <p>Gửi trực tiếp qua WebRTC. Hai bên cần giữ ứng dụng mở đến khi hoàn tất.</p>
+        <p>Hai bên giữ ứng dụng mở trong lúc gửi file.</p>
       </div></div>
       <form className="file-send" onSubmit={event => {
         event.preventDefault()
+        const transport = event.nativeEvent.submitter?.value
         void perform('offer', async () => {
-          if (!await files.offer(conversationId, selectedFile)) return
+          if (!await files.offer(conversationId, selectedFile, transport)) return
           setSelectedFile(null)
           setSelectionKey(value => value + 1)
         })
@@ -76,12 +77,15 @@ export default function FilesPage({ token, user, onSessionExpired }) {
             </option>)}
           </select>
         </div>
-        <label>Chọn tệp (tối đa 10 GiB)
+        <label>Chọn tệp
           <input key={selectionKey} type="file" required onChange={event => setSelectedFile(event.target.files[0] || null)} />
         </label>
         <button className="btn btn--primary" disabled={!!busy || files.connectionState !== 'connected'}>
           {busy === 'offer' ? 'Đang chuẩn bị…' : 'Gửi lời mời'}
         </button>
+        {files.relayAvailable && <button className="btn" disabled={!!busy} value="https">
+          Gửi qua máy chủ
+        </button>}
       </form>
       <p className="file-help">Chưa có người nhận trong danh sách? Mở cuộc trò chuyện từ mục Danh bạ trước.
         Khi nhận, chọn tên và vị trí lưu, giữ nguyên đuôi tệp. Với cách nhận để tải xuống,
@@ -93,11 +97,13 @@ export default function FilesPage({ token, user, onSessionExpired }) {
         <thead><tr><th>Tệp / người liên hệ</th><th>Thời gian</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
         <tbody>{files.items.map(transfer => {
           const sending = transfer.senderId === user.id
-          const ownEndpoint = (sending ? transfer.senderConnectionId : transfer.receiverConnectionId) === files.connectionId
+          const relay = transfer.transport === 'https'
+          const ownEndpoint = relay ? transfer.localRelayEndpoint
+            : (sending ? transfer.senderConnectionId : transfer.receiverConnectionId) === files.connectionId
           const canRespond = !sending && transfer.status === 'offered'
           const active = isFileActive(transfer)
           const conversation = conversations.find(item => item.id === transfer.conversationId)
-          const disabled = !!busy || files.connectionState !== 'connected'
+          const disabled = !!busy || (!relay && files.connectionState !== 'connected')
           const act = (method, extra) => void perform(transfer.id, () => files.action(method, transfer.id, extra))
           return <tr key={transfer.id}>
             <td><strong>{transfer.fileName}</strong><div>{size(transfer.fileSizeBytes)} · {sending ? 'Gửi đến' : 'Nhận từ'}{' '}
@@ -105,11 +111,12 @@ export default function FilesPage({ token, user, onSessionExpired }) {
             <td>{new Date(transfer.createdAt).toLocaleString('vi-VN')}</td>
             <td><span className={`pill pill--${transfer.status === 'completed' ? 'green' : 'gray'}`}>{localFileStatus(transfer) || LABELS[transfer.status]}</span>
               {transfer.savedLocally && <small>Đã lưu thành {transfer.savedName}.</small>}
+              {relay && <small>Qua máy chủ</small>}
               {active && transfer.transferredBytes !== undefined && <div>
                 <progress max={transfer.fileSizeBytes || 1} value={transfer.transferredBytes} aria-label={`Tiến độ ${transfer.fileName}`} />
                 <small>{size(transfer.transferredBytes)} / {size(transfer.fileSizeBytes)} · {size(transfer.bytesPerSecond || 0)}/s</small>
               </div>}
-              {files.developerMode && transfer.acceptedAt && transfer.channelCount > 0 && <small>
+              {!relay && files.developerMode && transfer.acceptedAt && transfer.channelCount > 0 && <small>
                 {transfer.protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL ? '2 kết nối riêng' : `${transfer.channelCount} kênh`}
                 {!active && transfer.bytesPerSecond > 0 ? ` · ${size(transfer.bytesPerSecond)}/s` : ''}
               </small>}
@@ -119,7 +126,7 @@ export default function FilesPage({ token, user, onSessionExpired }) {
             <td><div className="file-actions">
               {canRespond && <>
                 <button className="btn btn--primary" disabled={disabled} onClick={() => act('AcceptFile')}>Chấp nhận</button>
-                {canSaveFile(transfer) && transfer.fileSizeBytes <= LEGACY_MAX_FILE_BYTES && <button className="btn" disabled={disabled}
+                {!relay && canSaveFile(transfer) && transfer.fileSizeBytes <= LEGACY_MAX_FILE_BYTES && <button className="btn" disabled={disabled}
                   onClick={() => act('AcceptFile', { legacy: true })}>Nhận để tải xuống</button>}
                 <button className="btn" disabled={disabled} onClick={() => act('RejectFile')}>Từ chối</button>
               </>}

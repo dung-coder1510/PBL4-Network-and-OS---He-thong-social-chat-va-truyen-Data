@@ -7,12 +7,11 @@ export function chatTimeline(messages, transfers) {
     Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.key.localeCompare(b.key, 'en', { numeric: true }))
 }
 
-// Hien dung luong theo don vi nhi phan; 0 byte van la mot file hop le.
+// Hiển thị dung lượng theo đơn vị thập phân.
 export function formatFileSize(bytes) {
-  if (bytes < 1024) return `${Math.round(bytes)} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GiB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
+  if (bytes < 1000) return `${Math.round(bytes)} B`
+  if (bytes < 1_000_000) return `${(bytes / 1000).toFixed(1)} KB`
+  return `${(bytes / 1_000_000).toFixed(1)} MB`
 }
 
 // Chi bieu dien loai file tu duoi ten, khong doc hoac chay noi dung cua tep.

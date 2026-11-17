@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import AppShell from './components/layout/AppShell.jsx'
 import AuthPage from './pages/AuthPage.jsx'
 import EmptyWorkspacePage from './pages/EmptyWorkspacePage.jsx'
@@ -35,10 +35,21 @@ function App() {
   const [loggingOut, setLoggingOut] = useState(false)
   const [logoutError, setLogoutError] = useState('')
   const [openConversationId, setOpenConversationId] = useState(null)
+  const relayActive = useRef(false)
+  const expiryPending = useRef(false)
   const sessionExpired = useCallback(() => {
+    if (relayActive.current) {
+      expiryPending.current = true
+      return
+    }
+    expiryPending.current = false
     setSession(null)
     setNotice('Phiên đăng nhập đã hết hạn hoặc bị thu hồi. Bạn đăng nhập lại nhé.')
   }, [])
+  const relayActivity = useCallback(active => {
+    relayActive.current = active
+    if (!active && expiryPending.current) sessionExpired()
+  }, [sessionExpired])
   const adminAccessLost = useCallback(async () => {
     if (!session) return
     try {
@@ -74,8 +85,7 @@ function App() {
     const controller = new AbortController()
     const expire = () => {
       if (!active) return
-      setSession(null)
-      setNotice('Phiên đăng nhập đã hết hạn hoặc bị thu hồi. Bạn đăng nhập lại nhé.')
+      sessionExpired()
     }
     const timer = setTimeout(expire, Math.max(0, Date.parse(session.expiresAt) - Date.now()))
     const verify = async () => {
@@ -99,7 +109,7 @@ function App() {
       clearInterval(poll)
       window.removeEventListener('focus', verify)
     }
-  }, [session])
+  }, [session, sessionExpired])
 
   function navigate(nextPage) {
     setPage(nextPage)
@@ -141,6 +151,7 @@ function App() {
     <ChatRealtimeProvider key={session.sessionId} token={session.accessToken}
       user={session.user} onSessionExpired={sessionExpired}>
       <FileTransferProvider token={session.accessToken} user={session.user} developerMode={developerSettings.enabled}
+        onRelayActivity={relayActivity}
         preferredChannelCount={developerSettings.enabled ? developerSettings.fileChannelCount : null}
         parallelFileConnections={developerSettings.enabled && developerSettings.parallelFileConnections}>
       <AppShell currentPage={visiblePage} onLogout={logout} onNavigate={navigate} user={session.user} loggingOut={loggingOut}>

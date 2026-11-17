@@ -27,6 +27,8 @@ public sealed class FilesController(FileTransferService files, IConfiguration co
         legacyMaximumFileBytes = FileTransferService.LegacyMaximumFileBytes,
         maximumFileChannels = FileTransferService.MaximumFileChannels,
         supportsParallelFileConnections = true,
+        supportsHttpFileRelay = true,
+        maximumRelayBufferBytes = FileRelayPipe.MaximumBufferBytes,
         supportsDeferredHash = await FileTransferService.SupportsDeferredHashAsync(db, ct),
         iceServers = configuration.GetSection("WebRtc:IceServers").Get<IceServer[]>() ?? []
     });

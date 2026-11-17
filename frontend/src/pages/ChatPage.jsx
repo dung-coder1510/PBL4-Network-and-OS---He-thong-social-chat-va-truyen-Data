@@ -157,7 +157,7 @@ export default function ChatPage({ token, user, initialConversationId,
 
   // Tai lich su file cua dung chat; loi xac thuc van di qua callback chung cua phien dang nhap.
   useEffect(() => {
-    if (!selectedId || connectionState !== 'connected') return
+    if (!selectedId) return
     void loadConversationFiles(selectedId).catch(failure => {
       if (failure.status === 401) onSessionExpired()
     })
@@ -522,7 +522,8 @@ export default function ChatPage({ token, user, initialConversationId,
           setShowList(true)
         }}
         onRetry={retryDetail} onRetryHistory={retryHistory} onLoadOlder={loadOlderMessages}
-        onSend={submitMessage} onSendFile={file => files.offer(conversation.id, file)} onRetryMessage={message =>
+        onSend={submitMessage} relayAvailable={files.relayAvailable}
+        onSendFile={(file, transport) => files.offer(conversation.id, file, transport)} onRetryMessage={message =>
           submitMessage(message.content, message.clientMessageId)}
         onReconnect={reconnect} onCreate={() => setShowCreate(true)}
         onAddContact={() => setContactToAdd(conversation)} />

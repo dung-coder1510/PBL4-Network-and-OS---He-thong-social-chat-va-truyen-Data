@@ -109,7 +109,7 @@ test('warning only above 1 GiB; cancellation and over-limit files never hash or 
   await assert.rejects(manager.offer('1', file(limits.MAX_FILE_BYTES)), /reached incremental hash/)
   assert.equal(warnings, 2)
   assert.equal(reads, 3)
-  await assert.rejects(manager.offer('1', file(limits.MAX_FILE_BYTES + 1)), /10 GiB/)
+  await assert.rejects(manager.offer('1', file(limits.MAX_FILE_BYTES + 1)), /10737\.4 MB/)
   assert.equal(warnings, 2)
   assert.equal(reads, 3)
 })

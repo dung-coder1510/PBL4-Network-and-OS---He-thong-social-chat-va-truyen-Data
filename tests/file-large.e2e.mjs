@@ -106,7 +106,7 @@ try {
   assert.ok(quota.quota - quota.usage > size, 'Test requires quota for the substitute destination')
   console.log(`SETUP receiver uses a temporary persistent profile; available OPFS quota ${quota.quota - quota.usage} bytes`)
   await a.locator('.composer input[type=file]').setInputFiles(source)
-  const warning = a.getByRole('dialog', { name: 'Gửi tệp lớn hơn 1 GiB?' })
+  const warning = a.getByRole('dialog', { name: 'Gửi tệp lớn hơn 1073.7 MB?' })
   await warning.waitFor()
   assert.equal(await warning.getByRole('button', { name: 'Hủy', exact: true }).evaluate(button => button === document.activeElement), true)
   for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {

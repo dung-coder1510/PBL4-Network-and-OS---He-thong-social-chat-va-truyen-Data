@@ -16,8 +16,8 @@ cả hai máy để dùng v4. Trên database chưa nâng cấp, client dùng v3 
 1. Đăng nhập hai tài khoản trong hai cửa sổ/tab. Tạo cuộc trò chuyện giữa hai người
    từ mục Trò chuyện hoặc Danh bạ.
 2. Ngay trong cuộc trò chuyện, bấm **Gửi file** cạnh ô soạn tin rồi chọn file tối đa
-   **10 GiB** (10.737.418.240 byte). File **lớn hơn 1 GiB** hiện cảnh báo trước khi
-   tính hash/gửi lời mời; chọn **Tiếp tục gửi** hoặc **Hủy**. Đúng 1 GiB không cảnh báo.
+   **10.737,4 MB** (10.737.418.240 byte). File **lớn hơn 1.073.741.824 byte**
+   (xấp xỉ 1.073,7 MB) hiện cảnh báo trước khi gửi lời mời. Chọn **Tiếp tục gửi** hoặc **Hủy**.
    Lời mời tự gửi đến người đang trò chuyện, không cần chọn lại người nhận;
    bản nháp tin nhắn được giữ nguyên. Hoặc mở **Tệp**, chọn cuộc trò chuyện/file và bấm **Gửi lời mời**.
 3. Ngay khi gửi lời mời, cả hai thấy một thẻ file xen kẽ tin nhắn trong đúng cuộc trò chuyện.
@@ -27,7 +27,7 @@ cả hai máy để dùng v4. Trên database chưa nâng cấp, client dùng v3 
    Hết byte gửi chưa có nghĩa là đã hoàn tất: cần người nhận xác nhận đủ byte và SHA-256.
 5. Trên trình duyệt hỗ trợ, **Nhận file** mở hộp **Lưu thành (Save As)** để chọn
    tên file và vị trí lưu. App ghi từng phần vào đích đã chọn rồi chốt file
-   sau khi kiểm tra đủ byte và SHA-256. File tối đa **100 MiB** có thể chọn **Nhận để tải xuống**
+   sau khi kiểm tra đủ byte và SHA-256. File tối đa **104,9 MB** (104.857.600 byte) có thể chọn **Nhận để tải xuống**
    để dùng cách nhận vào bộ nhớ. Trình duyệt thiếu API ghi file chỉ tự dùng cách này
    với file nhỏ; file lớn bắt buộc hai bên dùng phiên bản mới và máy nhận hỗ trợ ghi đĩa.
    Có thể đổi trang trong ứng dụng trong lúc truyền.
@@ -63,7 +63,7 @@ Lịch sử riêng lấy từ `GET /api/v1/conversations/{id}/files?beforeId=...
 tải cả các trang text/file còn lại. Lời mời file cập nhật preview `[Tệp] tên_file` và thời gian
 hoạt động của conversation; không chèn tin text giả vào bảng `Messages`.
 
-## Đường truyền
+## Đường truyền WebRTC
 
 ```text
 A -- SignalR/ChatHub: lời mời, chấp nhận, SDP, ICE, trạng thái --> Server --> B
@@ -155,6 +155,52 @@ cửa sổ ACK, ghi vào một file và xác minh SHA-256 dùng chung với v5.
 Tab nhận chốt v6 nếu hỗ trợ. Nếu tab chỉ hỗ trợ v5 hoặc chế độ một kênh,
 hai bên dùng giao thức tương thích đã ghi trong lời mời. Tắt công tắc
 để thử lại bằng nhiều kênh chung một kết nối.
+
+## Chuyển tiếp trực tiếp qua HTTPS
+
+Trong **Trò chuyện** hoặc **Tệp**, chọn **Gửi qua máy chủ** để dùng HTTPS từ đầu.
+Khi một phiên WebRTC đang dùng chế độ ghi đĩa gặp lỗi báo hiệu hoặc mất kênh,
+ứng dụng chuyển chính thẻ đó sang **Qua máy chủ** và truyền lại từ byte đầu.
+Máy nhận tiếp tục dùng file đích đã chọn nếu còn quyền ghi.
+
+Hai bên giữ tab mở đến khi hoàn tất. Trước khi A tải lên, B bấm **Nhận file**,
+chọn nơi lưu bằng trình duyệt hỗ trợ File System Access và mở luồng tải xuống.
+Backend chuyển tiếp ngay sau mỗi lần đọc tối đa **64 KB**, giới hạn vùng đệm
+payload do ứng dụng cấp phát ở **4 MB mỗi phiên**, với tối đa 16 phiên đã cấp vùng đệm.
+Khi vùng đệm đầy, backend chờ luồng tải xuống giải phóng chỗ trước khi đọc tiếp.
+Nginx, hệ điều hành và trình duyệt có bộ đệm riêng.
+
+B ghi file theo luồng và kiểm tra đủ byte và SHA-256 trước khi đóng file đích.
+B gửi một biên nhận sau khi lưu. Biên nhận dùng khóa riêng của phiên để hoàn tất
+được cả khi JWT hết hạn trong lúc hai luồng HTTP đang chạy. Nếu mất một luồng,
+phiên dừng và gửi lại từ đầu. SQL lưu metadata và trạng thái, còn nội dung file
+và chế độ chuyển tiếp đang chạy nằm trong RAM của một backend instance.
+
+API dưới `/api/v1/files` dùng `POST /relay` để tạo lời mời, `POST /{id}/relay`
+để chuyển một phiên WebRTC, `POST /{id}/relay/accept` để nhận và `DELETE /{id}/relay`
+để kết thúc sớm. Hai luồng `PUT` và `GET` dùng chung `/{id}/relay/content`.
+B gửi biên nhận tới `POST /{id}/relay/complete`.
+
+Với cấu hình triển khai Nginx hiện có, thêm `location` sau trong `server` đang
+phục vụ `/api/`. Giữ đường dẫn request và tắt gom body ở cả hai chiều trên route
+truyền byte. [Tài liệu Nginx](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_request_buffering)
+
+```nginx
+location ~ ^/api/v1/files/[0-9]+/relay/content$ {
+    proxy_pass http://127.0.0.1:5000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_request_buffering off;
+    proxy_buffering off;
+    proxy_cache off;
+    client_max_body_size 10737418240;
+    client_body_timeout 120s;
+    proxy_send_timeout 120s;
+    proxy_read_timeout 120s;
+}
+```
 
 ## Giao thức file-v1 tương thích
 
@@ -269,6 +315,7 @@ Không cần server:
 ```powershell
 node --test tests/file-protocol.mjs tests/file-stream-protocol.mjs tests/file-large-protocol.mjs tests/file-storage.mjs tests/file-transfer-state.mjs tests/frontend-heartbeat.mjs
 dotnet run --project tests/presence/PresenceChecks.csproj
+dotnet run --project tests/file-relay/FileRelayChecks.csproj
 ```
 
 API/SignalR thật, yêu cầu backend + Vite đang chạy, SQL cùng database của backend:
@@ -292,6 +339,7 @@ $env:TEXT_TEST_ORIGIN = 'http://127.0.0.1:5173'
 $env:CODEX_NODE_MODULES = 'duong-dan-node_modules-co-playwright'
 node tests/chat-files.e2e.mjs
 node tests/file-stream.e2e.mjs
+node tests/file-relay.e2e.mjs
 node tests/file-large.e2e.mjs
 ```
 

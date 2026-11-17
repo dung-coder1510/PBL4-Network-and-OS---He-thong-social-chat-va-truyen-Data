@@ -2,7 +2,8 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { bytesToHex } from '@noble/hashes/utils.js'
 import { STREAM_PROTOCOLS } from './fileProtocol.js'
 
-export const canSaveFile = transfer => transfer?.supportedProtocols?.some(version => STREAM_PROTOCOLS.includes(version)) &&
+export const canSaveFile = transfer => (transfer?.transport === 'https' ||
+  transfer?.supportedProtocols?.some(version => STREAM_PROTOCOLS.includes(version))) &&
   globalThis.isSecureContext && typeof globalThis.showSaveFilePicker === 'function' &&
   typeof globalThis.FileSystemFileHandle?.prototype.createWritable === 'function'
 

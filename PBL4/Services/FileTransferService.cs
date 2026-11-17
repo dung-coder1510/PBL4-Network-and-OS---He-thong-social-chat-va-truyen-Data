@@ -9,7 +9,7 @@ using PBL4.Realtime;
 
 namespace PBL4.Services;
 
-public sealed class FileTransferService(IServiceScopeFactory scopes,
+public sealed partial class FileTransferService(IServiceScopeFactory scopes,
     IHubContext<ChatHub, IChatClient> hub, PresenceTracker presence, MonitoringService monitoring)
 {
     public const long MaximumFileBytes = 10L * 1024 * 1024 * 1024;
@@ -28,6 +28,9 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
         public int ReceiverId { get; } = receiverId;
         public string Sender { get; } = senderConnection;
         public string? Receiver { get; set; }
+        public string? SenderSession { get; init; }
+        public string? ReceiverSession { get; set; }
+        public RelaySession? Relay { get; set; }
         public string[] SupportedProtocols { get; init; } = ["file-v1"];
         public string ProtocolVersion { get; set; } = "file-v1";
         public int RequestedChannelCount { get; init; } = 1;
@@ -57,14 +60,18 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
             "SELECT ISNULL(COLUMNPROPERTY(OBJECT_ID(N'dbo.FileTransfers'), N'Sha256', 'AllowsNull'), 0) AS [Value]")
             .SingleAsync(ct) == 1;
 
-    public async Task<FileTransferDto> OfferAsync(int userId, string connectionId, OfferFileDto request)
+    public Task<FileTransferDto> OfferAsync(int userId, string connectionId, OfferFileDto request, string? sessionId = null) =>
+        CreateOfferAsync(userId, connectionId, request, sessionId, false);
+
+    private async Task<FileTransferDto> CreateOfferAsync(int userId, string connectionId, OfferFileDto request,
+        string? sessionId, bool relay)
     {
         if (!long.TryParse(request.ConversationId, NumberStyles.None, CultureInfo.InvariantCulture,
                 out var conversationId) || conversationId <= 0 || request.ClientTransferId == Guid.Empty ||
             request.FileSizeBytes is < 0 or > MaximumFileBytes ||
             string.IsNullOrWhiteSpace(request.FileName) || request.FileName.Length > 255 ||
             request.FileName.Any(character => char.IsControl(character) || character is '/' or '\\'))
-            throw new HubException("Thông tin tệp không hợp lệ (tối đa 10 GiB).");
+            throw new HubException("Thông tin tệp không hợp lệ (tối đa 10737.4 MB).");
         if (request.RequestedChannelCount is < 1 or > MaximumFileChannels ||
             request.SupportedProtocols is { Length: > 4 } || request.SupportedProtocols?.Any(protocol =>
                 protocol is not ("file-v1" or "file-v2" or "file-v3" or DeferredHashProtocol or
@@ -77,13 +84,13 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
             throw new HubException("Chế độ hai kết nối cần đúng hai kênh.");
         if (request.RequestedChannelCount > 1 && !offersParallelConnections && !protocols.Contains(MultichannelProtocol))
             throw new HubException("Truyền từ 2 đến 8 kênh cần giao thức đa kênh.");
-        var deferredHash = request.Sha256Hex is null &&
+        var deferredHash = !relay && request.Sha256Hex is null &&
             protocols.All(protocol => protocol is DeferredHashProtocol or MultichannelProtocol or ParallelConnectionsProtocol);
         if (protocols.Contains(DeferredHashProtocol) && (!deferredHash || request.FileSizeBytes <= LegacyMaximumFileBytes))
             throw new HubException("Lời mời file-v4 chỉ dùng cho tệp lớn và chốt SHA-256 trong lúc truyền.");
-        if (request.FileSizeBytes > LegacyMaximumFileBytes && !protocols.Any(protocol =>
+        if (!relay && request.FileSizeBytes > LegacyMaximumFileBytes && !protocols.Any(protocol =>
                 protocol is "file-v3" or DeferredHashProtocol or MultichannelProtocol or ParallelConnectionsProtocol))
-            throw new HubException("Tệp trên 100 MiB cần phiên bản truyền theo luồng mới ở cả hai máy.");
+            throw new HubException("Tệp trên 104.9 MB cần phiên bản truyền theo luồng mới ở cả hai máy.");
         var hash = deferredHash ? null : ParseHash(request.Sha256Hex);
         await gate.WaitAsync();
         try
@@ -107,7 +114,7 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
                     throw new HubException("Mã truyền tệp đã được dùng cho tệp khác.");
                 return ToDto(existing, receiverId, active.GetValueOrDefault(existing.Id));
             }
-            if (presence.GetValidConnectionIds([receiverId]).Count == 0)
+            if (!relay && presence.GetValidConnectionIds([receiverId]).Count == 0)
                 throw new HubException("Người nhận cần mở ứng dụng để nhận tệp.");
             if (active.Count >= 1000 || active.Values.Count(item =>
                     item.SenderId == userId || item.ReceiverId == userId) >= 2 ||
@@ -127,7 +134,9 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
             {
                 Size = transfer.FileSizeBytes,
                 SupportedProtocols = protocols,
-                RequestedChannelCount = request.RequestedChannelCount
+                RequestedChannelCount = request.RequestedChannelCount,
+                SenderSession = sessionId,
+                Relay = relay ? new RelaySession(sessionId!) : null
             };
             active.Add(transfer.Id, endpoints);
             return await PublishAsync(transfer, endpoints);
@@ -136,7 +145,8 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
     }
 
     public async Task<FileTransferDto> ActAsync(int userId, string connectionId,
-        FileActionDto request, string action, CompleteFileDto? completed = null, string? sourceHash = null)
+        FileActionDto request, string action, CompleteFileDto? completed = null, string? sourceHash = null,
+        string? sessionId = null)
     {
         var id = ParseId(request.TransferId);
         await gate.WaitAsync();
@@ -151,6 +161,8 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
             var endpoints = active.GetValueOrDefault(id);
             if (endpoints is null)
                 throw new HubException("Phiên truyền đã kết thúc. Hãy tải lại danh sách.");
+            if (endpoints.Relay is not null)
+                throw new HubException("Phiên truyền đang dùng HTTPS.");
             if (Convert.ToBase64String(transfer.RowVersion) != request.ExpectedVersion)
                 throw new HubException("Trạng thái đã thay đổi ở tab khác. Hãy thử lại.");
             var sender = userId == endpoints.SenderId && connectionId == endpoints.Sender;
@@ -182,6 +194,7 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
                     endpoints.ChannelCount = request.ChannelCount;
                     endpoints.Signals = parallelConnections ? [new(), new()] : [new()];
                     endpoints.Receiver = connectionId;
+                    endpoints.ReceiverSession = sessionId;
                     endpoints.Deadline = DateTime.UtcNow.AddSeconds(45);
                     transfer.AcceptedAt = DateTime.UtcNow;
                     transfer.Status = "accepted";
@@ -247,7 +260,7 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
         await gate.WaitAsync();
         try
         {
-            if (!active.TryGetValue(id, out var pair)) return;
+            if (!active.TryGetValue(id, out var pair) || pair.Relay is not null) return;
             var sender = pair.SenderId == userId && pair.Sender == connectionId;
             var receiver = pair.ReceiverId == userId && pair.Receiver == connectionId;
             if (!sender && !receiver) throw new HubException("Báo cáo thuộc tab khác.");
@@ -274,7 +287,7 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
         await gate.WaitAsync();
         try
         {
-            if (!active.TryGetValue(id, out var endpoints) || endpoints.Receiver is null ||
+            if (!active.TryGetValue(id, out var endpoints) || endpoints.Relay is not null || endpoints.Receiver is null ||
                 endpoints.Deadline <= DateTime.UtcNow)
                 throw new HubException("Phiên báo hiệu không còn hiệu lực.");
             var sender = userId == endpoints.SenderId && connectionId == endpoints.Sender;
@@ -326,8 +339,9 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
                     item.Status == "transferring");
             if (disconnectedConnection is not null)
             {
-                var affected = active.Where(pair => pair.Value.Sender == disconnectedConnection ||
-                    pair.Value.Receiver == disconnectedConnection).Select(pair => pair.Key).ToArray();
+                var affected = active.Where(pair => pair.Value.Relay is null &&
+                    (pair.Value.Sender == disconnectedConnection || pair.Value.Receiver == disconnectedConnection))
+                    .Select(pair => pair.Key).ToArray();
                 if (affected.Length == 0) return;
                 query = query.Where(item => affected.Contains(item.Id));
             }
@@ -342,6 +356,13 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
                 var endpoints = active.GetValueOrDefault(transfer.Id);
                 var receiverId = transfer.Conversation.UserAID == transfer.SenderId
                     ? transfer.Conversation.UserBID : transfer.Conversation.UserAID;
+                if (endpoints?.Relay is { } relay)
+                {
+                    if (!relay.IsIdle && !disabled.Contains(endpoints.SenderId) && !disabled.Contains(endpoints.ReceiverId))
+                        continue;
+                    await FinishRelayAsync(db, transfer, endpoints, transfer.Status == "offered" ? "expired" : "failed");
+                    continue;
+                }
                 var connected = presence.GetValidConnectionIds([transfer.SenderId, receiverId]);
                 if (endpoints is not null && endpoints.Deadline > DateTime.UtcNow &&
                     endpoints.Sender != disconnectedConnection &&
@@ -407,7 +428,9 @@ public sealed class FileTransferService(IServiceScopeFactory scopes,
         transfer.FinishedAt.HasValue ? DateTime.SpecifyKind(transfer.FinishedAt.Value, DateTimeKind.Utc) : null,
         Convert.ToBase64String(transfer.RowVersion), endpoints?.Sender, endpoints?.Receiver,
         endpoints?.SupportedProtocols ?? ["file-v1"],
-        endpoints?.ProtocolVersion, endpoints?.ChannelCount ?? 1, endpoints?.RequestedChannelCount ?? 1);
+        endpoints?.ProtocolVersion, endpoints?.ChannelCount ?? 1, endpoints?.RequestedChannelCount ?? 1,
+        endpoints?.Relay is null ? null : "https", endpoints?.Relay?.ReceiverReady ?? false,
+        endpoints?.Relay?.ForwardedBytes ?? 0);
 
     private static long ParseId(string value) =>
         long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0

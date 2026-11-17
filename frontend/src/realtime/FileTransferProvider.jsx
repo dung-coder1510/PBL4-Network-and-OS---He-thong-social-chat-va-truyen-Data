@@ -5,7 +5,8 @@ import { createFileTransfers } from '../services/fileTransfers.js'
 import LargeFileWarningDialog from '../components/files/LargeFileWarningDialog.jsx'
 import '../styles/files.css'
 
-export function FileTransferProvider({ token, user, developerMode, preferredChannelCount, parallelFileConnections, children }) {
+export function FileTransferProvider({ token, user, developerMode, preferredChannelCount, parallelFileConnections,
+  onRelayActivity, children }) {
   const { connection, connectionState } = useChatRealtime()
   const manager = useRef(null)
   const [snapshot, setSnapshot] = useState({ items: [], nextCursor: null })
@@ -27,9 +28,8 @@ export function FileTransferProvider({ token, user, developerMode, preferredChan
   const loadConversation = useCallback((...args) => manager.current?.loadConversation(...args) || Promise.resolve(), [])
 
   useEffect(() => {
-    if (!connection) return
     const current = createFileTransfers({
-      connection, token, userId: user.id, onChange: setSnapshot, onNotice: setNotice, confirmLargeFile,
+      token, userId: user.id, onChange: setSnapshot, onNotice: setNotice, confirmLargeFile, onRelayActivity,
     })
     manager.current = current
     return () => {
@@ -37,19 +37,21 @@ export function FileTransferProvider({ token, user, developerMode, preferredChan
       finishConfirmation(false)
       if (manager.current === current) manager.current = null
     }
-  }, [connection, token, user.id, confirmLargeFile, finishConfirmation])
+  }, [token, user.id, confirmLargeFile, finishConfirmation, onRelayActivity])
 
   useEffect(() => {
+    manager.current?.setConnection(connection ?? null)
     if (connectionState === 'connected')
       void manager.current?.load().catch(error => setNotice(error.message))
     else manager.current?.disconnected()
-  }, [connection, connectionState])
+  }, [connection, connectionState, token, user.id])
 
   return (
     <FileTransferContext.Provider value={{
       ...snapshot, connectionState, connectionId: connection?.connectionId,
       loadConversation, developerMode,
-      offer: (conversationId, file) => manager.current.offer(conversationId, file, preferredChannelCount, parallelFileConnections),
+      offer: (conversationId, file, transport) =>
+        manager.current.offer(conversationId, file, preferredChannelCount, parallelFileConnections, transport),
       action: (...args) => manager.current.action(...args),
       loadMore: () => manager.current.load(true),
       forgetDownload: id => manager.current.forgetDownload(id),

@@ -8,13 +8,15 @@ using PBL4.Auth;
 using PBL4.Contracts;
 using PBL4.Data;
 using PBL4.Realtime;
+using PBL4.Services;
 
 namespace PBL4.Controllers;
 
 [ApiController]
 [Route("api/v1/sessions")]
 public sealed class SessionsController(AppDbContext db, PasswordService passwords,
-    TokenService tokens, SessionRegistry sessions, PresenceService presence, UserAccessLock access) : ControllerBase
+    TokenService tokens, SessionRegistry sessions, PresenceService presence, UserAccessLock access,
+    FileTransferService files) : ControllerBase
 {
     /// <summary>Kiểm tra mật khẩu, cấp JWT 30 phút; không phân biệt user sai/password sai.</summary>
     [HttpPost, AllowAnonymous, EnableRateLimiting("auth")]
@@ -57,6 +59,7 @@ public sealed class SessionsController(AppDbContext db, PasswordService password
         var sessionId = User.FindFirstValue("sid")!;
         var userId = int.Parse(User.FindFirstValue("sub")!);
         sessions.Revoke(sessionId);
+        await files.RevokeRelaySessionAsync(sessionId);
         await presence.RevokeSessionAsync(userId, sessionId, ct);
         return NoContent();
     }
