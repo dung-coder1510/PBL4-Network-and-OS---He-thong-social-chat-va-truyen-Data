@@ -7,6 +7,7 @@ import ChatPage from './pages/ChatPage.jsx'
 import ContactsPage from './pages/ContactsPage.jsx'
 import { authApi } from './services/authApi.js'
 import { MAX_FILE_CHANNELS } from './services/fileProtocol.js'
+import { RELAY_CONNECTION_COUNTS } from './services/fileRelayProtocol.js'
 import { ChatRealtimeProvider } from './realtime/ChatRealtimeProvider.jsx'
 import { FileTransferProvider } from './realtime/FileTransferProvider.jsx'
 import FilesPage from './pages/FilesPage.jsx'
@@ -22,8 +23,9 @@ function readDeveloperSettings() {
     const count = saved?.fileChannelCount
     return { enabled: saved?.enabled === true,
       fileChannelCount: Number.isInteger(count) && count >= 1 && count <= MAX_FILE_CHANNELS ? count : 1,
-      parallelFileConnections: saved?.parallelFileConnections === true }
-  } catch { return { enabled: false, fileChannelCount: 1, parallelFileConnections: false } }
+      parallelFileConnections: saved?.parallelFileConnections === true,
+      relayConnectionCount: RELAY_CONNECTION_COUNTS.includes(saved?.relayConnectionCount) ? saved.relayConnectionCount : 1 }
+  } catch { return { enabled: false, fileChannelCount: 1, parallelFileConnections: false, relayConnectionCount: 1 } }
 }
 
 function App() {
@@ -153,11 +155,12 @@ function App() {
       <FileTransferProvider token={session.accessToken} user={session.user} developerMode={developerSettings.enabled}
         onRelayActivity={relayActivity}
         preferredChannelCount={developerSettings.enabled ? developerSettings.fileChannelCount : null}
-        parallelFileConnections={developerSettings.enabled && developerSettings.parallelFileConnections}>
+        relayConnectionCount={developerSettings.enabled ? developerSettings.relayConnectionCount : 1}
+        parallelFileConnections={developerSettings.enabled ? developerSettings.parallelFileConnections : null}>
       <AppShell currentPage={visiblePage} onLogout={logout} onNavigate={navigate} user={session.user} loggingOut={loggingOut}>
         {logoutError && <p className="auth-workspace-error" role="alert">{logoutError}</p>}
         {visiblePage === 'settings'
-          ? <SettingsPage onThemeChange={setTheme} theme={theme} user={session.user}
+          ? <SettingsPage onThemeChange={setTheme} theme={theme} user={session.user} token={session.accessToken}
               developerSettings={developerSettings} onDeveloperSettingsChange={setDeveloperSettings} />
           : visiblePage === 'contacts'
           ? <ContactsPage token={session.accessToken}

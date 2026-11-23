@@ -14,3 +14,11 @@ td progress { display: block; max-width: 100%; margin-top: 8px; }
 .file-warning-dialog p { margin: 12px 0; line-height: 1.6; color: var(--text-2); }
 .file-warning-name { overflow-wrap: anywhere; }
 .file-warning-dialog footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+.file-rtc-info { min-width: 0; overflow-wrap: anywhere; }
+.file-rtc-diagnostics { margin-top: 8px; font-size: 12px; line-height: 1.5; }
+.file-rtc-diagnostics summary { cursor: pointer; }
+.file-rtc-diagnostics dl { margin: 8px 0; }
+.file-rtc-diagnostics dl > div { margin: 6px 0; }
+.file-rtc-diagnostics dt { font-weight: 600; }
+.file-rtc-diagnostics dd { margin: 0; }
+.file-rtc-diagnostics p { margin: 8px 0 0; }

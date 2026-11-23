@@ -43,10 +43,13 @@ function instrument() {
   }
 }
 
-async function openPair(blockSignalr) {
+async function openPair(blockSignalr, relayConnections = 1) {
   const contexts = await Promise.all([browser.newContext(), browser.newContext()])
   for (const context of contexts) {
     await context.addInitScript(instrument)
+    await context.addInitScript(count => localStorage.setItem('pbl4-developer-settings', JSON.stringify({
+      enabled: true, fileChannelCount: 1, parallelFileConnections: false, relayConnectionCount: count,
+    })), relayConnections)
     if (blockSignalr) await context.route(/\/hubs\/chat(?:\/|\?|$)/, route => route.abort())
   }
   const pages = await Promise.all(contexts.map(context => context.newPage()))
@@ -164,7 +167,7 @@ try {
   await proveEarlyBytes(conversation.data.id)
   await writeFile(source, sample)
   browser = await chromium.launch({ channel: 'chrome', headless: true })
-  const manual = await openPair(true)
+  const manual = await openPair(true, 4)
   const [a, b] = manual.pages
   for (const page of manual.pages) await page.evaluate(() => { window.__failPeer = true })
   const cancelName = 'relay-cancelled.bin'
@@ -197,9 +200,27 @@ try {
   await assertSaved(b, name, sample.length, hash)
   await b.getByRole('button', { name: 'Đăng nhập', exact: true }).waitFor()
   await Promise.all(manual.contexts.map(context => context.close()))
-  console.log('PASS HTTP-only 110 MB browser transfer with SignalR and WebRTC blocked, through simulated login expiry')
+  console.log('PASS 4-connection HTTP-only 110 MB browser transfer, cancellation and simulated login expiry')
 
-  const automatic = await openPair(false)
+  for (const count of [1, 2, 4]) {
+    const pair = await openPair(true, count)
+    const [sender, receiver] = pair.pages
+    for (let round = 1; round <= 3; round++) {
+      await chooseRelayFile(sender, source)
+      const latest = card(receiver, name).last()
+      await latest.locator(':scope[data-status="offered"]').waitFor()
+      const start = performance.now()
+      await latest.getByRole('button', { name: 'Nhận file', exact: true }).click()
+      await latest.locator(':scope[data-status="completed"]').waitFor({ timeout: 150000 })
+      const seconds = (performance.now() - start) / 1000
+      await assertSaved(receiver, name, sample.length, hash)
+      console.log(JSON.stringify({ test: 'HTTPS browser 110 MB', connections: count, round,
+        seconds: Number(seconds.toFixed(3)), MBps: Number((110 / seconds).toFixed(2)) }))
+    }
+    await Promise.all(pair.contexts.map(context => context.close()))
+  }
+
+  const automatic = await openPair(false, 2)
   const [c, d] = automatic.pages
   await waitFor(() => c.locator('textarea').isEnabled(), Boolean)
   await waitFor(() => d.locator('textarea').isEnabled(), Boolean)

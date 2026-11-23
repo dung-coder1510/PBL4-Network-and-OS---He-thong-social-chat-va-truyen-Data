@@ -21,6 +21,8 @@ public sealed partial class FileTransferService
         public string? ReceiverSession { get; set; }
         public string? Key { get; set; }
         public bool ReceiverReady { get; set; }
+        public int ConnectionCount { get; set; } = 1;
+        public bool[] UploadClaimed { get; set; } = [];
         public CancellationTokenSource Ended { get; } = new();
         public TaskCompletionSource<RelayBody> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Drained { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -136,25 +138,54 @@ public sealed partial class FileTransferService
         }
     }
 
-    public async Task<FileTransferDto> UploadRelayAsync(long id, int userId, string sessionId, string? hash, long? contentLength,
-        Stream source, CancellationToken requestAborted)
+    public async Task<FileTransferDto> PrepareRelayAsync(long id, int userId, string sessionId,
+        PrepareFileRelayDto request, CancellationToken ct)
     {
-        RelaySession relay;
-        RelayBody body;
-        await gate.WaitAsync(requestAborted);
+        if (request.ConnectionCount is not (2 or 4))
+            throw new FileRelayException(400, "Chế độ song song cần 2 hoặc 4 kết nối.");
+        await BeginRelayAsync(id, userId, sessionId, request.Sha256Hex, null,
+            request.ConnectionCount, ct);
+        return await GetFileAsync(id, userId);
+    }
+
+    public async Task<FileTransferDto> UploadRelayAsync(long id, int userId, string sessionId, string? hash, long? contentLength,
+        Stream source, CancellationToken requestAborted, int? channelIndex = null)
+    {
+        var (relay, body) = channelIndex.HasValue
+            ? await ClaimRelayChannelAsync(id, userId, sessionId, hash, contentLength, channelIndex.Value, requestAborted)
+            : await BeginRelayAsync(id, userId, sessionId, hash, contentLength, 1, requestAborted);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(requestAborted, relay.Ended.Token);
+        try
+        {
+            var channel = channelIndex ?? 0;
+            var length = FileRelayPipe.ChannelLength(body.Content.Size, relay.ConnectionCount, channel);
+            await body.Pipe.ReadAsync(source, length, cancellation.Token, channel);
+            return await relay.Finished.Task.WaitAsync(cancellation.Token);
+        }
+        catch
+        {
+            await FailRelayAsync(id, relay);
+            throw;
+        }
+    }
+
+    private async Task<(RelaySession Relay, RelayBody Body)> BeginRelayAsync(long id, int userId,
+        string sessionId, string? hash, long? contentLength, int connections, CancellationToken ct)
+    {
+        await gate.WaitAsync(ct);
         try
         {
             using var scope = scopes.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var transfer = await FindRelayTransferAsync(db, id, userId);
             var (endpoints, found) = FindLiveRelay(id);
-            relay = found;
+            var relay = found;
             if (userId != endpoints.SenderId || sessionId != relay.SenderSession)
                 throw new FileRelayException(403, "Phiên truyền thuộc tab khác.");
             if (!relay.ReceiverReady || transfer.Status != "accepted" || relay.Started.Task.IsCompleted)
                 throw new FileRelayException(409, RelayConflict);
             await CheckRelayAccountsAsync(db, endpoints);
-            if (contentLength != transfer.FileSizeBytes)
+            if (connections == 1 && contentLength != transfer.FileSizeBytes)
                 throw new FileRelayException(400, "Dung lượng tải lên khác với lời mời.");
             var digest = ParseHash(hash);
             if (transfer.Sha256 is not null && !transfer.Sha256.SequenceEqual(digest))
@@ -164,25 +195,43 @@ public sealed partial class FileTransferService
             transfer.Sha256 = digest;
             transfer.Status = "transferring";
             await db.SaveChangesAsync();
-            body = new RelayBody(new FileRelayPipe(), new FileRelayContent(transfer.FileSizeBytes,
+            var body = new RelayBody(new FileRelayPipe(connections), new FileRelayContent(transfer.FileSizeBytes,
                 Convert.ToHexString(digest).ToLowerInvariant()));
+            relay.ConnectionCount = connections;
+            relay.UploadClaimed = new bool[connections];
             relay.Touch();
             relay.Started.SetResult(body);
             await PublishAsync(transfer, endpoints);
+            return (relay, body);
         }
         finally { gate.Release(); }
+    }
 
-        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(requestAborted, relay.Ended.Token);
+    private async Task<(RelaySession Relay, RelayBody Body)> ClaimRelayChannelAsync(long id, int userId,
+        string sessionId, string? hash, long? contentLength, int channel, CancellationToken ct)
+    {
+        await gate.WaitAsync(ct);
         try
         {
-            await body.Pipe.ReadAsync(source, body.Content.Size, cancellation.Token);
-            return await relay.Finished.Task.WaitAsync(cancellation.Token);
+            using var scope = scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var transfer = await FindRelayTransferAsync(db, id, userId);
+            var (endpoints, relay) = FindLiveRelay(id);
+            if (userId != endpoints.SenderId || sessionId != relay.SenderSession)
+                throw new FileRelayException(403, "Phiên truyền thuộc tab khác.");
+            if (!relay.Started.Task.IsCompletedSuccessfully || transfer.Status != "transferring" ||
+                relay.ConnectionCount == 1 || channel < 0 || channel >= relay.ConnectionCount || relay.UploadClaimed[channel])
+                throw new FileRelayException(409, RelayConflict);
+            await CheckRelayAccountsAsync(db, endpoints);
+            var body = relay.Started.Task.Result;
+            if (contentLength != FileRelayPipe.ChannelLength(body.Content.Size, relay.ConnectionCount, channel) ||
+                !ParseHash(hash).SequenceEqual(transfer.Sha256!))
+                throw new FileRelayException(400, "Dung lượng hoặc SHA-256 của kết nối không khớp.");
+            relay.UploadClaimed[channel] = true;
+            relay.Touch();
+            return (relay, body);
         }
-        catch
-        {
-            await FailRelayAsync(id, relay);
-            throw;
-        }
+        finally { gate.Release(); }
     }
 
     // Biên nhận có quyền trên đúng phiên và đúng vai trò đã được xác thực khi mở luồng tải.

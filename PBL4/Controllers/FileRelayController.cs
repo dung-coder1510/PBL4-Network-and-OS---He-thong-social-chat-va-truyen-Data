@@ -45,9 +45,13 @@ public sealed class FileRelayController(FileTransferService files) : ControllerB
         }, HttpContext.RequestAborted));
 
     [HttpPut("{id:long}/relay/content"), RequestSizeLimit(FileTransferService.MaximumFileBytes)]
-    public Task<IActionResult> Upload(long id) => ReplyAsync(() =>
+    public Task<IActionResult> Upload(long id, [FromQuery] int? channel = null) => ReplyAsync(() =>
         files.UploadRelayAsync(id, UserId, SessionId, Request.Headers["X-File-SHA256"].ToString(),
-            Request.ContentLength, Request.Body, HttpContext.RequestAborted));
+            Request.ContentLength, Request.Body, HttpContext.RequestAborted, channel));
+
+    [HttpPost("{id:long}/relay/upload"), RequestSizeLimit(8192)]
+    public Task<IActionResult> Prepare(long id, PrepareFileRelayDto request) => ReplyAsync(() =>
+        files.PrepareRelayAsync(id, UserId, SessionId, request, HttpContext.RequestAborted));
 
     [HttpPost("{id:long}/relay/complete"), AllowAnonymous, RequestSizeLimit(8192)]
     public Task<IActionResult> Complete(long id, CompleteFileDto receipt) =>

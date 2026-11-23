@@ -9,6 +9,10 @@ import {
 } from './fileProtocol.js'
 import { createStreamReceiver, createStreamSender, hashFile, readStreamControl, streamControl, streamHeaderBytes } from './fileStreamProtocol.js'
 import { canSaveFile, createFileStorage, pickFileDestination } from './fileStorage.js'
+import { createRelayUploadBodies, RELAY_CONNECTION_COUNTS } from './fileRelayProtocol.js'
+import { MAX_FILE_WINDOW } from './fileFlowControl.js'
+import { monitorFileRtc } from './fileRtcDiagnostics.js'
+import { createTransferRate } from './fileTransferRate.js'
 
 export const isFileActive = transfer => !!transfer && ['offered', 'accepted', 'transferring'].includes(transfer.status)
 
@@ -82,7 +86,12 @@ export function createFileTransfers({ connection: initialConnection, token, user
     const cleanup = storage?.disk?.dispose()
     const peer = peers.get(id)
     if (!peer) return cleanup
+    const current = transfers.get(id)
+    if (current?.rtcDiagnostics)
+      transfers.set(id, { ...current, rtcDiagnostics: { ...current.rtcDiagnostics,
+        ...(peer.sender?.diagnostics() || peer.streamReceiver?.diagnostics()) } })
     peers.delete(id)
+    peer.stopDiagnostics?.()
     clearTimeout(peer.timeout)
     clearTimeout(peer.closeTimeout)
     peer.abort.abort()
@@ -200,19 +209,29 @@ export function createFileTransfers({ connection: initialConnection, token, user
 
   async function uploadRelay(transfer) {
     if (relayJobs.has(transfer.id)) return
-    const file = pending.get(transfer.clientTransferId)
-    if (!file) return
+    const selected = pending.get(transfer.clientTransferId)
+    if (!selected) return
+    const { file } = selected
     const job = { abort: new AbortController(), startedAt: performance.now(), lastUpdate: 0, active: true }
     relayJobs.set(transfer.id, job)
     relayActivity()
     const { signal } = job.abort
     try {
       const sha = transfer.sha256Hex ?? await hashFile(file, signal)
-      const response = await requestFileContent(`${relayPath(transfer.id)}/content`, {
-        method: 'PUT', body: file, token, signal,
-        headers: { 'Content-Type': 'application/octet-stream', 'X-File-SHA256': sha },
-      })
-      changed(await response.json())
+      const settings = await config()
+      const count = Math.min(selected.relayConnectionCount, settings.maximumRelayConnections ?? 1)
+      if (count > 1) {
+        changed(await request(`${relayPath(transfer.id)}/upload`, {
+          method: 'POST', token, signal, body: { sha256Hex: sha, connectionCount: count },
+        }))
+      }
+      const bodies = createRelayUploadBodies(file, count)
+      const responses = await Promise.all(bodies.map((body, channel) =>
+        requestFileContent(`${relayPath(transfer.id)}/content${count > 1 ? `?channel=${channel}` : ''}`, {
+          method: 'PUT', body, token, signal,
+          headers: { 'Content-Type': 'application/octet-stream', 'X-File-SHA256': sha },
+        })))
+      changed(await responses[0].json())
     } catch (error) {
       if (!signal.aborted) await failRelay(transfer.id, error)
     } finally { releaseRelay(transfer.id) }
@@ -318,8 +337,9 @@ export function createFileTransfers({ connection: initialConnection, token, user
     const now = performance.now()
     if (now - peer.lastUpdate < 250 && bytes !== current.fileSizeBytes) return
     peer.lastUpdate = now
+    peer.rate ??= createTransferRate(peer.startedAt)
     transfers.set(id, { ...current, transferredBytes: bytes,
-      bytesPerSecond: bytes / Math.max(0.001, (now - peer.startedAt) / 1000) })
+      ...peer.rate.sample(bytes, now) })
     emit()
   }
 
@@ -331,7 +351,7 @@ export function createFileTransfers({ connection: initialConnection, token, user
   async function sendFile(id) {
     const peer = peers.get(id)
     const current = transfers.get(id)
-    const file = pending.get(current.clientTransferId)
+    const file = pending.get(current.clientTransferId)?.file
     if (!file) throw new Error('Tệp gốc không còn ở tab gửi. Hãy gửi lại.')
     if (peer.streaming) {
       const finalizeHash = current.sha256Hex == null
@@ -444,6 +464,7 @@ export function createFileTransfers({ connection: initialConnection, token, user
       }
       if (!peer.opened) {
         peer.opened = true
+        peer.startDiagnostics()
         observe(id, 'channel-open')
         peer.startedAt = performance.now()
         armTimeout(id)
@@ -451,7 +472,7 @@ export function createFileTransfers({ connection: initialConnection, token, user
           fail(id, error, peer.channels.some(item => item?.readyState === 'closed' || item?.readyState === 'closing')))
       }
       if (!sending && peer.streaming) {
-        try { channel.send(streamControl('READY', id, undefined, index)) }
+        try { channel.send(streamControl('READY', id, undefined, index, peer.streamReceiver.capabilities)) }
         catch (error) { void fail(id, error, true) }
       }
     }
@@ -525,6 +546,7 @@ export function createFileTransfers({ connection: initialConnection, token, user
       pc.ondatachannel = event => attachChannel(transfer.id, event.channel, false, connectionIndex)
     }
     const streamOptions = { signal: peer.abort.signal, protocolVersion: peer.protocolVersion,
+      roundTripMs: () => peer.roundTripMs,
       onProgress: bytes => progress(transfer.id, bytes) }
     if (sending) {
       for (let index = 0; index < channelCount; index++) {
@@ -535,10 +557,23 @@ export function createFileTransfers({ connection: initialConnection, token, user
       if (streaming) peer.sender = createStreamSender({ ...streamOptions, channels: peer.channels, transferId: transfer.id })
     } else if (streaming) {
       peer.streamReceiver = createStreamReceiver({ ...streamOptions, size: transfer.fileSizeBytes, channelCount,
+        maxWindowBytes: MAX_FILE_WINDOW,
         write: (offset, data) => peer.disk.write(offset, data),
-        acknowledge: bytes => peer.channels[0].send(streamControl('ACK', transfer.id, bytes)),
+        acknowledge: (bytes, details) => peer.channels[0].send(streamControl('ACK', transfer.id, bytes, 0, details)),
       })
     }
+    peer.startDiagnostics = () => peer.stopDiagnostics ??= monitorFileRtc({ connections: peer.connections, sending, signal: peer.abort.signal,
+      onUpdate: connections => {
+        const current = transfers.get(transfer.id)
+        if (peers.get(transfer.id) !== peer || disposed || !isFileActive(current) || current.transport === 'https') return
+        const latencies = connections.map(item => item.roundTripMs).filter(value => value !== null)
+        peer.roundTripMs = latencies.length ? Math.max(...latencies) : null
+        const rate = peer.rate?.sample(current.transferredBytes || 0)
+        transfers.set(transfer.id, { ...current, ...(rate ? { bytesPerSecond: rate.bytesPerSecond } : {}), rtcDiagnostics: { connections,
+          ...(sending ? peer.sender?.diagnostics() : peer.streamReceiver?.diagnostics()) } })
+        emit()
+      },
+    })
     armTimeout(transfer.id, 45000)
     return peer
   }
@@ -576,7 +611,7 @@ export function createFileTransfers({ connection: initialConnection, token, user
     const cleanup = changedToRelay ? releasePeer(transfer.id) : null
     transfers.set(transfer.id, { ...previous, ...transfer,
       transport: transfer.transport ?? previous?.transport,
-      ...(changedToRelay ? { localFailure: false, error: '', transferredBytes: 0, bytesPerSecond: 0 } : {}),
+      ...(changedToRelay ? { localFailure: false, error: '', transferredBytes: 0, bytesPerSecond: 0, rtcDiagnostics: undefined } : {}),
       protocolVersion: transfer.protocolVersion ?? previous?.protocolVersion,
       channelCount: transfer.protocolVersion ? transfer.channelCount : previous?.channelCount,
       localPhase: isFileActive(transfer) ? previous?.localPhase : null })
@@ -731,7 +766,8 @@ export function createFileTransfers({ connection: initialConnection, token, user
   const relayPoll = setInterval(pollRelay, 1000)
   return {
     load, loadConversation, action, disconnected, forgetDownload, setConnection,
-    async offer(conversationId, file, preferredChannelCount = null, useParallelConnections = false, transport = 'webrtc') {
+    async offer(conversationId, file, preferredChannelCount = null, useParallelConnections = null, transport = 'webrtc',
+      relayConnectionCount = 1) {
       if (!file || !Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_FILE_BYTES)
         throw new Error(`Tệp vượt dung lượng gửi cho phép (${formatFileSize(MAX_FILE_BYTES)}).`)
       if (!globalThis.crypto?.subtle) throw new Error('Truyền file cần HTTPS hoặc localhost.')
@@ -739,7 +775,8 @@ export function createFileTransfers({ connection: initialConnection, token, user
       if (disposed) throw new Error('Phiên đăng nhập đã kết thúc.')
       if (pending.size >= 2) throw new Error('Tab này đã có 2 tệp đang chờ hoặc đang gửi.')
       const clientTransferId = crypto.randomUUID()
-      pending.set(clientTransferId, file)
+      pending.set(clientTransferId, { file,
+        relayConnectionCount: RELAY_CONNECTION_COUNTS.includes(relayConnectionCount) ? relayConnectionCount : 1 })
       try {
         const settings = await config()
         if (file.size > (settings.maximumFileBytes ?? MAX_FILE_BYTES))
@@ -756,7 +793,11 @@ export function createFileTransfers({ connection: initialConnection, token, user
         }
         if (!webRtcAvailable) throw new Error('Chưa có kết nối WebRTC hoặc SignalR.')
         const large = file.size > LEGACY_MAX_FILE_BYTES
-        const desiredChannelCount = useParallelConnections ? PARALLEL_CONNECTION_COUNT : preferredChannelCount
+        // Chế độ thường chọn hai kết nối cho file lớn khi backend hỗ trợ.
+        // Giá trị false từ nhà phát triển vẫn giữ lựa chọn kênh thủ công.
+        const parallelConnections = useParallelConnections ?? (preferredChannelCount === null && large &&
+          settings.supportsParallelFileConnections === true && settings.maximumFileChannels >= PARALLEL_CONNECTION_COUNT)
+        const desiredChannelCount = parallelConnections ? PARALLEL_CONNECTION_COUNT : preferredChannelCount
         const experimental = desiredChannelCount !== null && settings.maximumFileChannels > 0
         const requestedChannelCount = experimental
           ? Math.min(desiredChannelCount, settings.maximumFileChannels, MAX_FILE_CHANNELS) : 1
@@ -764,7 +805,7 @@ export function createFileTransfers({ connection: initialConnection, token, user
           ? [settings.supportsDeferredHash && typeof globalThis.Worker === 'function' ? DEFERRED_HASH_PROTOCOL : 'file-v3']
           : ['file-v1', 'file-v2']
         if (experimental) supportedProtocols.unshift(MULTICHANNEL_PROTOCOL)
-        if (useParallelConnections && settings.supportsParallelFileConnections &&
+        if (parallelConnections && settings.supportsParallelFileConnections &&
             requestedChannelCount === PARALLEL_CONNECTION_COUNT)
           supportedProtocols.unshift(PARALLEL_CONNECTIONS_PROTOCOL)
         const deferred = supportedProtocols.includes(DEFERRED_HASH_PROTOCOL)

@@ -103,10 +103,57 @@ trước khi chấp nhận và gửi `READY` khi kênh mở. Máy gửi gọi
 `BeginFileTransfer` sau `READY`. Cách lưu này cần HTTPS hoặc
 localhost và trình duyệt hỗ trợ File System Access.
 
-V2/v3 giữ hạn mức chưa ACK 512 KiB và ACK mỗi 64 KiB. V4 dùng hạn mức
-2 MiB và gom tối đa 256 KiB mỗi lượt ghi. Máy nhận ACK sau khi writer
+V2/v3 giữ hạn mức chưa ACK **524.288 byte**, ACK mỗi **65.536 byte**. V4/v5/v6
+bắt đầu với cửa sổ **2.097.152 byte**, gom tối đa **262.144 byte** mỗi lượt ghi.
+Máy nhận ACK sau khi writer
 ghi thành công từng lô và ở cuối. Tiến độ gửi tính theo ACK, tiến độ
 nhận tính theo số byte đã ghi. Buffer WebRTC ở đầu gửi có hạn mức riêng.
+
+### Cửa sổ tự điều chỉnh và thống kê đường truyền
+
+Từ bản cập nhật ngày 21/11/2026, tab nhận mới quảng bá `maxWindowBytes: 8000000`
+trong `READY` của v4/v5/v6. Tab gửi chỉ bật điều chỉnh sau khi nhận khả năng này
+trên kênh 0. Nếu `READY` không có trường mới, cửa sổ giữ nguyên **2,10 MB**
+để tương thích tab cũ. V2/v3 giữ hạn mức ban đầu.
+
+Cửa sổ payload của cả file thay đổi trong khoảng **2.097.152–8.000.000 byte**,
+dựa trên tốc độ ACK, RTT nếu có, thời gian phải chờ cửa sổ và thời gian ghi mỗi
+lô do máy nhận trả trong `ACK.writeMs`. Mỗi lượt điều chỉnh cách nhau ít nhất
+500 ms. Máy nhận ghi chậm hoặc ACK bị ngắt quãng dài làm cửa sổ giảm về tối
+thiểu mức ban đầu 2,10 MB. Số đo RTT ở đây là của ICE, dùng để ước lượng,
+không phải toàn bộ thời gian SCTP và xác nhận ghi đĩa. Tốc độ thấp ở đầu phiên
+không được làm cửa sổ giảm xuống dưới mức ban đầu.
+Số kênh không nhân trần 8 MB lên. Máy nhận từ chối khối vượt cửa sổ quảng bá.
+
+V4/v5/v6 giữ tổng ngân sách đệm gửi **1.048.576 byte** (khoảng 1,05 MB),
+chia đều giữa các kênh. Ngưỡng báo đệm thấp là **65.536 byte**. Sender kiểm
+tra lại chỗ trống thực tế trước khi gửi tiếp để không nhận nhầm sự kiện cũ
+trong hàng đợi. Thử nghiệm giới hạn bốn khung suốt phiên đã được bỏ sau khi
+phép đo 110 MB phát hiện tốc độ duy trì giảm. Worker vẫn giữ một lô đọc và
+một lô đọc trước.
+Trần 8 MB áp dụng cho payload
+chưa ACK của ứng dụng, không phải tổng RAM của tab, SCTP hay hệ điều hành.
+`bufferedAmount` chỉ đo dữ liệu chờ gửi trong trình duyệt, không đo hàng đợi
+ghi đĩa ở máy nhận. [RTCDataChannel bufferedAmount](https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel/bufferedAmount)
+
+Thẻ Chat và trang Tệp hiển thị đường **WebRTC trực tiếp**, **qua TURN** hoặc
+chưa xác định từ cặp ICE được chọn. Trong chế độ nhà phát triển, mở **Thống kê
+WebRTC** để xem từng kết nối, RTT, tốc độ byte trên mạng, cửa sổ, byte chưa ACK,
+đệm gửi/hàng đợi ghi và thời gian chờ. Vòng đo `getStats()` chạy một lần mỗi
+giây, dừng khi phiên kết thúc, hủy, logout hoặc đổi sang HTTPS. Số đo là cục bộ
+trong tab, không lưu SQL, không gửi IP, SDP hoặc TURN credential lên dashboard.
+Thiếu thống kê không được suy ra là đường trực tiếp.
+[WebRTC Stats](https://www.w3.org/TR/webrtc-stats/)
+
+Tốc độ trên thanh tiến độ là số byte đã ghi/được ACK trong cửa sổ khoảng một
+giây gần nhất, sau khi có hai mẫu dữ liệu. Thời gian chờ byte đầu tiên không
+làm giảm tốc độ hiện tại. Khi WebRTC ngừng tiến triển, vòng thống kê lấy mẫu
+byte không đổi để tốc độ hiện tại về 0. Tốc độ trung bình từ lúc mở kênh vẫn
+được giữ trong `averageBytesPerSecond` và dùng cho kết quả cuối phiên.
+
+Thay đổi này không tự chọn số kênh, không thêm resume/ICE restart và không
+cam kết tăng tốc trên mọi mạng. Cần đo riêng giữa hai máy và qua TURN để so
+với cấu hình cũ.
 
 V4 gửi lời mời với hash chưa chốt. Web Worker đọc lô 512 KiB, cập nhật SHA-256
 theo thứ tự và chuyển buffer cho luồng gửi, tối đa một lô đọc trước.
@@ -122,11 +169,25 @@ Chrome có thể ghi vào file `.crswap` cạnh đích rồi đổi khi đóng w
 App không ghi thêm bản OPFS hay chép toàn bộ file ở cuối.
 [File System API](https://fs.spec.whatwg.org/#dom-filesystemwritablefilestream-write)
 
+### Mặc định tự động
+
+Khi tắt chế độ nhà phát triển, file không quá **104.857.600 byte** (khoảng
+104,9 MB) giữ một kết nối như trước. File lớn hơn ưu tiên hai kết nối riêng
+nếu cấu hình API có `supportsParallelFileConnections: true` và
+`maximumFileChannels >= 2`. Lời mời đặt v6/v5 trước giao thức một kênh phù
+hợp để máy nhận chọn phương án tương thích. Máy chủ thiếu khả năng này
+vẫn dùng một kết nối.
+
+Đây là lựa chọn theo dung lượng và khả năng hỗ trợ, không phải phép đo
+băng thông tự động trong từng phiên. Chế độ nhà phát triển ưu tiên cấu
+hình thủ công đã chọn. Đệm gửi vẫn khoảng 1,05 MB cho cả file; cửa sổ ACK
+v4/v5/v6 vẫn 2,10–8 MB, dùng chung giữa các kênh/kết nối.
+
 ### Thử truyền từ 1 đến 8 kênh
 
 Bật **Cài đặt → Nhà phát triển → Kích hoạt chế độ nhà phát triển** rồi chọn
 **Số kênh truyền file**. Thiết lập lưu trên trình duyệt và áp dụng từ lời mời
-tiếp theo. Mặc định là một kênh. Trong chế độ này, thẻ file hiện số kênh
+tiếp theo. Bộ chọn thủ công khởi đầu ở một kênh. Trong chế độ này, thẻ file hiện số kênh
 đã chốt và tốc độ đo được trong phiên.
 
 Khi bật thử nghiệm, lời mời thêm `file-v5` cùng giao thức một kênh phù hợp với
@@ -139,22 +200,25 @@ SHA-256 trước lời mời.
 V5 mở các DataChannel có thứ tự trên cùng một `RTCPeerConnection`, chờ `READY`
 ở tất cả kênh rồi gửi. Khối thứ `i` đi qua kênh `i % channelCount`. Máy nhận
 kiểm tra offset theo từng kênh, giữ các khối đến sớm trong cửa sổ chung và ghi
-byte liên tiếp vào một file đích. V5 dùng tổng cửa sổ 2 MiB và các lượt ghi
-tối đa 256 KiB. Kênh 0 báo ACK cho số byte liên tiếp đã ghi. Máy nhận đợi `END`
+byte liên tiếp vào một file đích. V5 dùng cửa sổ chung đã thương lượng và các
+lượt ghi tối đa **262.144 byte**. Kênh 0 báo ACK cho số byte liên tiếp đã ghi. Máy nhận đợi `END`
 từ mọi kênh trước khi kiểm tra SHA-256 và chốt file. Lỗi trên một kênh kết thúc
 phiên. Đo riêng đường trực tiếp và TURN để chọn số kênh phù hợp.
 
-### Thử hai kết nối WebRTC riêng
+### Hai kết nối WebRTC riêng
 
-Bật **Hai kết nối WebRTC riêng** trong **Cài đặt → Nhà phát triển**. Lượt gửi
+File lớn ở chế độ tự động đề nghị v6 khi máy chủ hỗ trợ. Để chủ động thử
+với mọi dung lượng, bật **Hai kết nối WebRTC riêng** trong
+**Cài đặt → Nhà phát triển**. Lượt gửi
 tiếp theo đề nghị `file-v6` với hai `RTCPeerConnection` và một DataChannel
 trên mỗi kết nối. SignalR dùng `ConnectionIndex` 0 hoặc 1 để chuyển SDP và
 ICE. Phiên chỉ bắt đầu gửi khi cả hai kênh báo `READY`. Cách chia khối,
 cửa sổ ACK, ghi vào một file và xác minh SHA-256 dùng chung với v5.
 
 Tab nhận chốt v6 nếu hỗ trợ. Nếu tab chỉ hỗ trợ v5 hoặc chế độ một kênh,
-hai bên dùng giao thức tương thích đã ghi trong lời mời. Tắt công tắc
-để thử lại bằng nhiều kênh chung một kết nối.
+hai bên dùng giao thức tương thích đã ghi trong lời mời. Trong chế độ
+nhà phát triển, tắt công tắc để thử lại bằng nhiều kênh chung một kết nối.
+Tắt chế độ nhà phát triển để quay lại mặc định tự động.
 
 ## Chuyển tiếp trực tiếp qua HTTPS
 
@@ -189,7 +253,7 @@ phục vụ `/api/`. Giữ đường dẫn request và tắt gom body ở cả h
 truyền byte. [Tài liệu Nginx](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_request_buffering)
 
 ```nginx
-location ~ ^/api/v1/files/[0-9]+/relay/content$ {
+location ~ ^/api/v1/files/([0-9]+/relay/content|relay/diagnostics)$ {
     proxy_pass http://127.0.0.1:5000;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
@@ -211,6 +275,53 @@ frontend để truyền byte qua tên miền trực tiếp. Biến này áp dụ
 `GET` trên `/{id}/relay/content`. Lời mời, trạng thái và biên nhận dùng API
 theo `VITE_API_BASE_URL`. Tên miền trực tiếp cần cấu hình route Nginx ở trên
 và khai báo origin frontend trong `Cors:AllowedOrigins` của backend.
+
+### Thử 1, 2 và 4 kết nối HTTPS
+
+Trong **Cài đặt → Nhà phát triển**, bật chế độ nhà phát triển rồi chọn
+**Số kết nối HTTPS**. Giá trị mặc định là 1. Lựa chọn được chốt theo file
+khi gửi lời mời và dùng cả khi WebRTC tự chuyển sang HTTPS.
+
+Với 2 hoặc 4 kết nối, A gọi `POST /api/v1/files/{id}/relay/upload` với
+`{ sha256Hex, connectionCount }`, rồi mở các `PUT /relay/content?channel=0`
+đến `channel=connectionCount-1`. Kênh 0 gửi các khối 64.000 byte số 0, N,
+2N và tiếp tục như vậy, kênh 1 gửi khối số 1, N+1, 2N+1. Body của từng
+PUT là một Blob ghép từ các lát file. Mỗi kênh chỉ được claim một lần,
+có Content-Length xác định và khai báo SHA-256 của file gốc.
+
+Backend dành một phần vùng đệm cho từng kênh và đọc luân phiên đúng thứ
+tự khối. Tổng payload chờ là 3.968.000 byte với 1 hoặc 2 kết nối,
+3.840.000 byte với 4 kết nối. B tiếp tục dùng một GET và writer tuần tự,
+kiểm tra SHA-256 rồi đóng file. Hủy một phiên giải phóng tất cả luồng
+của phiên. Số kết nối của phiên đang chạy có trong `relayConnectionCount`.
+Sau khi phiên đã rời bộ nhớ, lịch sử dùng giá trị mặc định của trường này.
+
+Nút **Đo đường truyền HTTPS** chạy riêng PUT 110 MB rồi GET 110 MB tại
+`/api/v1/files/relay/diagnostics`. Người dùng chọn nơi lưu file thử, thời
+gian tải xuống gồm cả ghi đĩa, xác minh và đóng file. Cần áp dụng route
+streaming Nginx trên cho endpoint này. Phép đo cần đăng nhập, giới hạn
+110 MB mỗi request, 12 request mỗi phút mỗi tài khoản và tối đa hai
+request chẩn đoán đồng thời trên một backend. Khi rời trang hoặc bấm
+**Dừng đo**, client hủy phép đo và writer chưa hoàn tất.
+
+Để so 1/2/4 kết nối, dùng đúng hai máy, cùng file và nơi lưu, chạy ba lượt
+mỗi mức, so thời gian từ bấm nhận đến lưu xong và SHA-256. Bộ
+`tests/file-relay.e2e.mjs` thực hiện phép so 110 MB trong Chrome, đồng thời
+kiểm tra hủy và tự chuyển từ WebRTC. Số đo trên cùng máy phục vụ kiểm tra
+triển khai, còn mức cải thiện qua WAN cần đo giữa hai máy thật.
+
+Lượt kiểm tra ngày 20/11/2026 trên cùng máy Windows, Chrome, backend dùng
+DB kiểm thử riêng, cùng tệp 110 MB, cho số đo từ bấm nhận đến lưu xong:
+
+| Kết nối tải lên | Lượt 1 | Lượt 2 | Lượt 3 | Trung vị |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 18,43 MB/s | 18,90 MB/s | 18,56 MB/s | 18,56 MB/s |
+| 2 | 17,68 MB/s | 18,65 MB/s | 20,25 MB/s | 18,65 MB/s |
+| 4 | 18,46 MB/s | 19,49 MB/s | 21,13 MB/s | 19,49 MB/s |
+
+Cả 9 lượt đều đúng SHA-256. Các mức chênh lệch này bao gồm thời gian
+ghi đĩa và xử lý của trình duyệt trên một máy. Mặc định giữ 1 kết nối
+để người dùng chọn mức thử nghiệm sau khi đo trên đường WAN của mình.
 
 ## Giao thức file-v1 tương thích
 
@@ -320,6 +431,50 @@ Frontend: `services/fileProtocol.js` (frame/hash/backpressure),
 
 ## Kiểm thử
 
+Lựa chọn mặc định tự động được kiểm tra trong
+`tests/file-offer-policy.mjs`: file lớn dùng hai kết nối khi được hỗ trợ,
+lựa chọn thủ công được giữ, cấu hình máy chủ cũ lui về một kết nối và
+luồng HTTPS không đổi. Tổng bộ kiểm tra Node liên quan hiện qua **68 test**.
+Hai bộ kiểm tra Chrome `tests/file-flow.e2e.mjs` và
+`tests/file-stream.e2e.mjs` qua **32 nhóm kiểm tra**, gồm chế độ tự động,
+máy chủ cũ, SHA-256, chat đồng thời, hủy phiên và chuyển sang HTTPS.
+Số đo bổ sung trên giao diện thật, gồm file 330 MB và các mức dao động,
+có trong [báo cáo thử cấu hình](nghien-cuu-bo-dem-webrtc.md#cập-nhật-lựa-chọn-mặc-định-tự-động).
+
+Đợt thử tăng đệm gửi lên 2–32 MB, ACK tới 64 MB và khối gửi 32/64 KB
+chưa tìm được cấu hình nhanh hơn mức hiện tại trên cùng máy. Mức đệm gửi
+32 MB gây lỗi đầy hàng đợi của Chrome. Tham số bản chính được giữ nguyên;
+xem [số đo và giới hạn của phép thử](nghien-cuu-bo-dem-webrtc.md).
+
+Bản sửa hồi quy ngày 21/11/2026 qua **59 kiểm tra Node**, lint và build
+frontend; cả hai browser suite bên dưới cũng được chạy lại thành công với
+SQL riêng. Hai lượt 110 MB với một DataChannel trên một kết nối WebRTC đạt
+**4,90–5,78 MB/s** sau sửa, so với **2,92 MB/s** ở bản bị chậm. Đúng mã nguồn
+commit `a539676` đạt **5,11–5,74 MB/s** trong hai lượt đối chiếu. Các lượt dùng
+cùng nguồn, writer, xác minh SHA-256 và hai context Chrome trên cùng máy;
+mọi bản lưu đều khớp hash. Kết quả cho thấy tốc độ trở lại gần bản commit cũ,
+không chứng minh nhanh hơn bản cũ trên mọi lần chạy.
+
+Phép thử ngắn 32 MB trước đó cho thấy lợi ích ở đầu phiên nhưng đã bỏ sót
+suy giảm tốc độ duy trì khi giới hạn đệm ở bốn khung. Giới hạn này và việc
+giảm cửa sổ dưới mức ban đầu đều đã được sửa. Đây là số đo loopback với
+đích OPFS thay picker, không xác định tốc độ tối đa trên LAN/TURN hoặc mọi
+thư mục Windows. Giới hạn của browser và điều kiện chạy vẫn ảnh hưởng kết quả.
+
+Ngày 21/11/2026, bản cửa sổ tự điều chỉnh qua **52 kiểm tra Node**, lint/build
+frontend và build .NET. Hai browser suite `file-flow.e2e.mjs` và
+`file-stream.e2e.mjs` chạy Chrome thật với SQL riêng, qua các trường hợp:
+110 MB có SHA-256 khớp và chat đồng thời; 1/2/4/8 kênh; hai kết nối riêng;
+`READY` cũ không quảng bá cửa sổ; máy nhận ghi chậm; hủy; sai hash; lỗi ghi;
+giữ file đã lưu khi mất xác nhận; chuyển WebRTC sang HTTPS và nhận từ trang Tệp.
+Giao diện thống kê được xem ở 1365 × 900 và 390 × 844.
+
+Picker trong các test được thay bằng handle OPFS dành riêng cho fixture.
+Đây là kiểm tra chức năng giữa hai context Chrome trên cùng máy, không phải
+phép đo tốc độ LAN giữa hai thiết bị hay qua TURN thật. Chưa có kết quả khẳng
+định mức tăng tốc trên các đường mạng đó. Dữ liệu thử và backend thử đã dọn
+sau khi hoàn tất, database `PBL4` của người dùng không được dùng cho các test này.
+
 Không cần server:
 
 ```powershell
@@ -345,10 +500,13 @@ Kiểm tra thẻ file ngay trong chat:
 
 ```powershell
 node tests/chat-file-state.mjs
+node --test tests/file-flow-control.mjs tests/file-rtc-diagnostics.mjs
+node --test tests/file-startup-buffer.mjs tests/file-transfer-rate.mjs
 $env:TEXT_TEST_ORIGIN = 'http://127.0.0.1:5173'
 $env:CODEX_NODE_MODULES = 'duong-dan-node_modules-co-playwright'
 node tests/chat-files.e2e.mjs
 node tests/file-stream.e2e.mjs
+node tests/file-flow.e2e.mjs
 node tests/file-relay.e2e.mjs
 node tests/file-large.e2e.mjs
 ```

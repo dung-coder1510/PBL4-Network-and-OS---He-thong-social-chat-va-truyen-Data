@@ -430,7 +430,7 @@ public sealed partial class FileTransferService(IServiceScopeFactory scopes,
         endpoints?.SupportedProtocols ?? ["file-v1"],
         endpoints?.ProtocolVersion, endpoints?.ChannelCount ?? 1, endpoints?.RequestedChannelCount ?? 1,
         endpoints?.Relay is null ? null : "https", endpoints?.Relay?.ReceiverReady ?? false,
-        endpoints?.Relay?.ForwardedBytes ?? 0);
+        endpoints?.Relay?.ForwardedBytes ?? 0, endpoints?.Relay?.ConnectionCount ?? 1);
 
     private static long ParseId(string value) =>
         long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0

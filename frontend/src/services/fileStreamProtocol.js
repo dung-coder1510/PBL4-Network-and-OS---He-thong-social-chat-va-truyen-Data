@@ -1,13 +1,14 @@
 import { sha256 } from '@noble/hashes/sha2.js'
+import { createFileFlowControl, INITIAL_FILE_WINDOW, MAX_FILE_WINDOW } from './fileFlowControl.js'
 import {
-  BUFFER_HIGH, CHUNK_BYTES, DEFERRED_HASH_PROTOCOL, LEGACY_MAX_FILE_BYTES, MAX_FILE_BYTES, MAX_FILE_CHANNELS,
+  BUFFER_HIGH, BUFFER_LOW, CHUNK_BYTES, DEFERRED_HASH_PROTOCOL, LEGACY_MAX_FILE_BYTES, MAX_FILE_BYTES, MAX_FILE_CHANNELS,
   MULTICHANNEL_PROTOCOL, PARALLEL_CONNECTION_COUNT, PARALLEL_CONNECTIONS_PROTOCOL, encodeChunk, waitForBuffer,
 } from './fileProtocol.js'
 
 export const ACK_WINDOW = 512 * 1024
 export const ACK_INTERVAL = 64 * 1024
 const DIRECT_WRITE_BYTES = 256 * 1024
-const DIRECT_ACK_WINDOW = 2 * 1024 ** 2
+const DIRECT_ACK_WINDOW = INITIAL_FILE_WINDOW
 const DIRECT_SEND_BUFFER = 1024 ** 2
 const FILE_BATCH_BYTES = 512 * 1024
 const BATCHED_PROTOCOLS = [DEFERRED_HASH_PROTOCOL, MULTICHANNEL_PROTOCOL, PARALLEL_CONNECTIONS_PROTOCOL]
@@ -107,8 +108,8 @@ async function* readHashedBatches(file, signal) {
   }
 }
 
-export function streamControl(type, transferId, bytes, channel = 0) {
-  return JSON.stringify({ type, transferId, channel, ...(bytes === undefined ? {} : { bytes }) })
+export function streamControl(type, transferId, bytes, channel = 0, details = {}) {
+  return JSON.stringify({ type, transferId, channel, ...(bytes === undefined ? {} : { bytes }), ...details })
 }
 
 export function readStreamControl(text, transferId, channel = 0) {
@@ -121,16 +122,31 @@ export function readStreamControl(text, transferId, channel = 0) {
 }
 
 // Kênh 0 nhận ACK cho số byte liên tiếp đã ghi xong. Cửa sổ áp dụng chung cho cả file.
-export function createStreamSender({ channels, transferId, signal, onProgress, protocolVersion = 'file-v2' }) {
+export function createStreamSender({ channels, transferId, signal, onProgress, protocolVersion = 'file-v2',
+  roundTripMs, clock = () => performance.now() }) {
   const header = streamHeaderBytes(protocolVersion)
   validateChannelCount(channels.length, protocolVersion)
   const batched = BATCHED_PROTOCOLS.includes(protocolVersion)
-  const windowBytes = batched ? DIRECT_ACK_WINDOW : ACK_WINDOW
+  const flow = createFileFlowControl({ initialWindow: batched ? DIRECT_ACK_WINDOW : ACK_WINDOW, clock, roundTripMs })
+  // Giữ ngân sách gửi đã chạy ổn cho cả file, chia đều giữa các kênh.
+  // Không giới hạn bốn khung suốt phiên vì làm giảm tốc độ duy trì.
   const sendBuffer = batched ? Math.floor(DIRECT_SEND_BUFFER / channels.length) : BUFFER_HIGH
+  for (const channel of channels)
+    channel.bufferedAmountLowThreshold = BUFFER_LOW
   const changes = new EventTarget()
   const readyChannels = new Set()
   let sent = 0
   let acknowledged = 0
+  let waiting = null
+  async function trackWait(kind, operation) {
+    const started = clock()
+    waiting = { kind, started }
+    try { await operation() }
+    finally {
+      flow.waited(kind, clock() - started)
+      waiting = null
+    }
+  }
   function waitUntil(predicate) {
     return new Promise((resolve, reject) => {
       function check() {
@@ -153,10 +169,12 @@ export function createStreamSender({ channels, transferId, signal, onProgress, p
       const channel = channels[Math.floor(position / CHUNK_BYTES) % channels.length]
       const payload = bytes.subarray(start, start + CHUNK_BYTES)
       const length = payload.byteLength
-      if (sent - acknowledged + length > windowBytes)
-        await waitUntil(() => sent - acknowledged + length <= windowBytes)
-      if (channel.bufferedAmount + length + header > sendBuffer)
-        await waitForBuffer(channel, signal, length + header, sendBuffer)
+      if (sent - acknowledged + length > flow.windowBytes) {
+        await trackWait('ack', () => waitUntil(() => sent - acknowledged + length <= flow.windowBytes))
+      }
+      if (channel.bufferedAmount + length + header > sendBuffer) {
+        await trackWait('buffer', () => waitForBuffer(channel, signal, length + header, sendBuffer))
+      }
       signal.throwIfAborted()
       sent += length
       channel.send(encodeStreamChunk(position, payload, protocolVersion))
@@ -166,15 +184,27 @@ export function createStreamSender({ channels, transferId, signal, onProgress, p
   return {
     handle(text, index = 0) {
       const frame = readStreamControl(text, transferId, index)
-      if (frame.type === 'READY' && channels[index] && !readyChannels.has(index)) readyChannels.add(index)
+      if (frame.type === 'READY' && channels[index] && !readyChannels.has(index)) {
+        if (batched && index === 0) flow.negotiate(frame.maxWindowBytes)
+        readyChannels.add(index)
+      }
       else if (frame.type === 'ACK' && index === 0 && readyChannels.size === channels.length && Number.isSafeInteger(frame.bytes) &&
           frame.bytes >= acknowledged && frame.bytes <= sent) {
         if (frame.bytes > acknowledged) {
+          flow.acknowledge(frame.bytes, frame.writeMs)
           acknowledged = frame.bytes
           onProgress(acknowledged)
         }
       } else throw new Error('ACK hoặc READY không hợp lệ.')
       changes.dispatchEvent(new Event('change'))
+    },
+    diagnostics() {
+      const snapshot = flow.snapshot()
+      return { ...snapshot,
+        ackWaitMs: snapshot.ackWaitMs + (waiting?.kind === 'ack' ? clock() - waiting.started : 0),
+        bufferWaitMs: snapshot.bufferWaitMs + (waiting?.kind === 'buffer' ? clock() - waiting.started : 0),
+        inFlightBytes: sent - acknowledged,
+        bufferedBytes: channels.reduce((total, channel) => total + (channel?.bufferedAmount || 0), 0) }
     },
     async send(file, begin, finalizeHash) {
       validateSize(file.size, protocolVersion)
@@ -202,8 +232,10 @@ export function createStreamSender({ channels, transferId, signal, onProgress, p
         const [channel] = channels
         for (let offset = 0; offset < file.size; offset += CHUNK_BYTES) {
           const length = Math.min(CHUNK_BYTES, file.size - offset)
-          await waitUntil(() => sent - acknowledged + length <= windowBytes)
-          await waitForBuffer(channel, signal, length + header)
+          if (sent - acknowledged + length > flow.windowBytes)
+            await trackWait('ack', () => waitUntil(() => sent - acknowledged + length <= flow.windowBytes))
+          if (channel.bufferedAmount + length + header > BUFFER_HIGH)
+            await trackWait('buffer', () => waitForBuffer(channel, signal, length + header))
           const payload = await file.slice(offset, offset + length).arrayBuffer()
           signal.throwIfAborted()
           sent += payload.byteLength
@@ -222,12 +254,15 @@ export function createStreamSender({ channels, transferId, signal, onProgress, p
 }
 
 // Kiểm tra ngay khi nhận để chặn peer gửi vượt cửa sổ trong lúc writer còn chậm.
-export function createStreamReceiver({ size, signal, write, acknowledge, onProgress, protocolVersion = 'file-v2', channelCount = 1 }) {
+export function createStreamReceiver({ size, signal, write, acknowledge, onProgress, protocolVersion = 'file-v2',
+  channelCount = 1, maxWindowBytes = DIRECT_ACK_WINDOW }) {
   validateSize(size, protocolVersion)
   validateChannelCount(channelCount, protocolVersion)
   const batched = BATCHED_PROTOCOLS.includes(protocolVersion)
   const requiresChannelEnds = protocolVersion === MULTICHANNEL_PROTOCOL || protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL
-  const windowBytes = batched ? DIRECT_ACK_WINDOW : ACK_WINDOW
+  if (batched && (!Number.isSafeInteger(maxWindowBytes) || maxWindowBytes < DIRECT_ACK_WINDOW || maxWindowBytes > MAX_FILE_WINDOW))
+    throw new Error('Hạn mức cửa sổ nhận không hợp lệ.')
+  const windowBytes = batched ? maxWindowBytes : ACK_WINDOW
   const ackBytes = batched ? DIRECT_WRITE_BYTES : ACK_INTERVAL
   const nextOffsets = Array.from({ length: channelCount }, (_, index) => index * CHUNK_BYTES)
   const endedChannels = new Set()
@@ -239,6 +274,7 @@ export function createStreamReceiver({ size, signal, write, acknowledge, onProgr
   let queue = Promise.resolve()
   let batch
   let buffered = 0
+  let writeMs = null
   function queueWrite(payload) {
     let data = payload
     if (batched) {
@@ -256,18 +292,25 @@ export function createStreamReceiver({ size, signal, write, acknowledge, onProgr
     const position = received - data.byteLength
     queue = queue.then(async () => {
       signal.throwIfAborted()
+      const started = performance.now()
       await write(position, data)
+      writeMs = Math.min(60_000, performance.now() - started)
       signal.throwIfAborted()
       written += data.byteLength
       onProgress(written)
       if (written - acknowledged >= ackBytes || written === size) {
-        acknowledge(written)
+        acknowledge(written, batched ? { writeMs } : {})
         acknowledged = written
       }
     })
   }
 
   return {
+    capabilities: batched ? { maxWindowBytes: windowBytes } : {},
+    diagnostics() {
+      return { maximumWindowBytes: windowBytes, queuedBytes: [...pending.values()].reduce((total, data) => total + data.byteLength, 0) + received - written,
+        receiverWriteMs: writeMs }
+    },
     push(frame, index = 0) {
       signal.throwIfAborted()
       const { offset, payload } = readStreamChunk(frame, protocolVersion)

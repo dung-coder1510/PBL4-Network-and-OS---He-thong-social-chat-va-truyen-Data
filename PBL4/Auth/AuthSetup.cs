@@ -49,6 +49,9 @@ public static class AuthSetup
         });
         services.AddRateLimiter(options =>
         {
+            options.AddPolicy("relay-diagnostics", context => RateLimitPartition.GetFixedWindowLimiter(
+                context.User.FindFirst("sub")?.Value ?? "unknown",
+                _ => new FixedWindowRateLimiterOptions { PermitLimit = 12, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
             // Authenticated administrators behind the same NAT have separate budgets.
             options.AddPolicy("monitoring", context => RateLimitPartition.GetFixedWindowLimiter(
                 context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",

@@ -6,6 +6,7 @@ import { canSaveFile } from '../../services/fileStorage.js'
 import { LEGACY_MAX_FILE_BYTES, PARALLEL_CONNECTIONS_PROTOCOL } from '../../services/fileProtocol.js'
 import { localFileStatus } from '../../services/fileTransferState.js'
 import { fileTypeLabel, formatFileSize } from '../../utils/chatTimeline.js'
+import FileRtcDiagnostics from '../files/FileRtcDiagnostics.jsx'
 
 // Mot the duy nhat cho moi TransferId; dung lai controller P2P cua trang Tep.
 export default function FileMessageCard({ transfer, currentUserId }) {
@@ -44,6 +45,7 @@ export default function FileMessageCard({ transfer, currentUserId }) {
   return <>
     <article className={`bubble file-message-card${sending ? ' outgoing' : ''}`}
     data-transfer-id={transfer.id} data-status={transfer.status} data-transport={transfer.transport}
+    data-relay-connections={transfer.relayConnectionCount}
     aria-label={`Tệp ${transfer.fileName}`}>
     <div className="file-message-main">
       <span className={`file-message-icon type-${type.toLowerCase()}`} aria-hidden="true">{type}</span>
@@ -60,8 +62,12 @@ export default function FileMessageCard({ transfer, currentUserId }) {
     </div>}
     {!relay && files.developerMode && transfer.acceptedAt && transfer.channelCount > 0 && <p className="file-message-hint">
       {transfer.protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL ? '2 kết nối riêng' : `${transfer.channelCount} kênh`}
-      {!active && transfer.bytesPerSecond > 0 ? ` · ${formatFileSize(transfer.bytesPerSecond)}/s` : ''}
+      {!active && (transfer.averageBytesPerSecond || transfer.bytesPerSecond) > 0
+        ? ` · ${formatFileSize(transfer.averageBytesPerSecond || transfer.bytesPerSecond)}/s` : ''}
     </p>}
+    {relay && files.developerMode && transfer.relayConnectionCount > 1 &&
+      <p className="file-message-hint">{transfer.relayConnectionCount} kết nối tải lên HTTPS</p>}
+    {!relay && <FileRtcDiagnostics stats={transfer.rtcDiagnostics} developerMode={files.developerMode} />}
     {active && !canRespond && !ownEndpoint && <p className="file-message-hint">Đang xử lý ở tab khác.</p>}
     {transfer.savedLocally && <p className="file-message-hint">Đã lưu thành {transfer.savedName}.</p>}
     {transfer.status === 'completed' && !sending && !transfer.downloadUrl && !transfer.savedLocally &&

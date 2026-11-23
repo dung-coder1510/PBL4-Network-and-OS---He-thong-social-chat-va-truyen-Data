@@ -13,10 +13,12 @@ public sealed record CompleteFileDto(string TransferId, string ExpectedVersion,
 public sealed record FileSignalDto(string TransferId, string Kind, string Payload, int ConnectionIndex = 0);
 public sealed record FileRelayAcceptanceDto(FileTransferDto Transfer, string ReceiverKey);
 public sealed record FileRelayContent(long Size, string Sha256Hex);
+public sealed record PrepareFileRelayDto(string Sha256Hex, int ConnectionCount);
 public sealed record FileTransferDto(string Id, Guid ClientTransferId, string ConversationId,
     int SenderId, int ReceiverId, string FileName, long FileSizeBytes, string? Sha256Hex,
     string? VerifiedSha256Hex, string Status, DateTime CreatedAt, DateTime? AcceptedAt,
     DateTime? FinishedAt, string Version, string? SenderConnectionId, string? ReceiverConnectionId,
     string[]? SupportedProtocols = null, string? ProtocolVersion = null, int ChannelCount = 1,
-    int RequestedChannelCount = 1, string? Transport = null, bool RelayReady = false, long RelayedBytes = 0);
+    int RequestedChannelCount = 1, string? Transport = null, bool RelayReady = false, long RelayedBytes = 0,
+    int RelayConnectionCount = 1);
 public sealed record FilePageDto(IReadOnlyList<FileTransferDto> Items, string? NextCursor);

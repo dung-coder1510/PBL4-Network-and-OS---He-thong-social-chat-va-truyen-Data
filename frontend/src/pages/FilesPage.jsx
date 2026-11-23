@@ -7,6 +7,7 @@ import { LEGACY_MAX_FILE_BYTES, PARALLEL_CONNECTIONS_PROTOCOL } from '../service
 import { formatFileSize as size } from '../utils/chatTimeline.js'
 import { useFileTransfers } from '../realtime/fileTransferContext.js'
 import { useChatRealtime } from '../realtime/chatRealtimeContext.js'
+import FileRtcDiagnostics from '../components/files/FileRtcDiagnostics.jsx'
 
 const LABELS = {
   offered: 'Chờ chấp nhận', accepted: 'Đang kết nối', transferring: 'Đang truyền / chờ xác nhận',
@@ -118,8 +119,12 @@ export default function FilesPage({ token, user, onSessionExpired }) {
               </div>}
               {!relay && files.developerMode && transfer.acceptedAt && transfer.channelCount > 0 && <small>
                 {transfer.protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL ? '2 kết nối riêng' : `${transfer.channelCount} kênh`}
-                {!active && transfer.bytesPerSecond > 0 ? ` · ${size(transfer.bytesPerSecond)}/s` : ''}
+                {!active && (transfer.averageBytesPerSecond || transfer.bytesPerSecond) > 0
+                  ? ` · ${size(transfer.averageBytesPerSecond || transfer.bytesPerSecond)}/s` : ''}
               </small>}
+              {relay && files.developerMode && transfer.relayConnectionCount > 1 &&
+                <small>{transfer.relayConnectionCount} kết nối tải lên HTTPS</small>}
+              {!relay && <FileRtcDiagnostics stats={transfer.rtcDiagnostics} developerMode={files.developerMode} />}
               {active && !canRespond && !ownEndpoint && <small>Đang xử lý ở tab khác.</small>}
               {transfer.error && <p role="status">{transfer.error}</p>}
             </td>

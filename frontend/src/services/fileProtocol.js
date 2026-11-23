@@ -60,6 +60,7 @@ export function createFileReceiver(expectedBytes) {
 export function waitForBuffer(channel, signal, nextBytes = 0, highWaterMark = BUFFER_HIGH) {
   if (signal.aborted) return Promise.reject(new DOMException('Đã hủy', 'AbortError'))
   if (channel.readyState !== 'open') return Promise.reject(new Error('Kênh truyền đã đóng.'))
+  if (nextBytes > highWaterMark) return Promise.reject(new Error('Khung dữ liệu vượt giới hạn đệm gửi.'))
   if (channel.bufferedAmount + nextBytes <= highWaterMark) return Promise.resolve()
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => finish(new Error('Kênh truyền bị nghẽn quá 30 giây.')), 30000)
@@ -72,13 +73,15 @@ export function waitForBuffer(channel, signal, nextBytes = 0, highWaterMark = BU
       if (error) reject(error)
       else resolve()
     }
-    const drained = () => finish()
+    const drained = () => {
+      if (channel.bufferedAmount + nextBytes <= highWaterMark) finish()
+    }
     const closed = () => finish(new Error('Kênh truyền đã đóng.'))
     const aborted = () => finish(new DOMException('Đã hủy', 'AbortError'))
     channel.addEventListener('bufferedamountlow', drained)
     channel.addEventListener('close', closed)
     channel.addEventListener('error', closed)
     signal.addEventListener('abort', aborted, { once: true })
-    if (channel.bufferedAmount <= BUFFER_LOW) drained()
+    drained()
   })
 }
