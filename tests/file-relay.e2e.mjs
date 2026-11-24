@@ -240,6 +240,24 @@ try {
   assert.equal(await d.evaluate(() => window.__relayPickerCalls), 1)
   await assertSaved(d, fallback, shorter.length, digest(shorter))
   console.log('PASS browser WebRTC failure switches the same chat card to HTTPS and saves the correct file')
+
+  let abortedPartOnce = false
+  await d.route('**/api/v1/files/*/relay/parts/1*', async route => {
+    if (!abortedPartOnce) {
+      abortedPartOnce = true
+      await route.abort('failed')
+      return
+    }
+    await route.continue()
+  })
+  const retryPayload = sample.subarray(0, 9_000_013)
+  const retryName = 'multipart-retry.bin'
+  await chooseRelayFile(c, { name: retryName, mimeType: 'application/octet-stream', buffer: retryPayload })
+  await card(d, retryName).getByRole('button', { name: 'Nhận file', exact: true }).click()
+  await Promise.all([completed(c, retryName), completed(d, retryName)])
+  assert.equal(abortedPartOnce, true)
+  await assertSaved(d, retryName, retryPayload.length, digest(retryPayload))
+  console.log('PASS multipart browser GET part failure retries automatically and preserves exact SHA-256')
 } finally {
   await browser?.close()
   await run.cleanup()

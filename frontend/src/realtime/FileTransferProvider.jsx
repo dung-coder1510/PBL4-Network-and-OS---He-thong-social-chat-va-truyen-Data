@@ -6,7 +6,7 @@ import LargeFileWarningDialog from '../components/files/LargeFileWarningDialog.j
 import '../styles/files.css'
 
 export function FileTransferProvider({ token, user, developerMode, preferredChannelCount, parallelFileConnections,
-  relayConnectionCount, onRelayActivity, children }) {
+  relayConnectionCount, allowTurnForFiles = false, onRelayActivity, children }) {
   const { connection, connectionState } = useChatRealtime()
   const manager = useRef(null)
   const [snapshot, setSnapshot] = useState({ items: [], nextCursor: null })
@@ -38,6 +38,10 @@ export function FileTransferProvider({ token, user, developerMode, preferredChan
       if (manager.current === current) manager.current = null
     }
   }, [token, user.id, confirmLargeFile, finishConfirmation, onRelayActivity])
+
+  useEffect(() => {
+    manager.current?.setAllowTurnForFiles(allowTurnForFiles)
+  }, [allowTurnForFiles])
 
   useEffect(() => {
     manager.current?.setConnection(connection ?? null)

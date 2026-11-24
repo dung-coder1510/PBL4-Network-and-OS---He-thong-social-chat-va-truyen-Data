@@ -20,6 +20,7 @@ export default function FileRtcDiagnostics({ stats, developerMode }) {
             {connection.bytesPerSecond !== null ? ` · ${formatFileSize(connection.bytesPerSecond)}/s trên mạng` : ''}
           </dd>
         </div>)}
+        {stats.chunkBytes !== undefined && <div><dt>Kích thước khung</dt><dd>{formatFileSize(stats.chunkBytes)}</dd></div>}
         {stats.windowBytes !== undefined && <div><dt>Cửa sổ chờ ACK</dt>
           <dd>{formatFileSize(stats.windowBytes)} · {stats.adaptive ? 'Tự điều chỉnh' : 'Cố định'}</dd></div>}
         {stats.maximumWindowBytes !== undefined && <div><dt>Giới hạn máy nhận</dt>

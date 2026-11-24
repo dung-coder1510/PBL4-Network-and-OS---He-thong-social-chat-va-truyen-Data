@@ -69,3 +69,17 @@ test('a low-buffer notification cannot authorize another frame while the byte li
   await pending
   assert.equal(resolved, true)
 })
+
+test('batched protocols scale bufferedAmountLowThreshold to half of per-channel send budget', () => {
+  for (const [count, expectedThreshold] of [[1, 512 * 1024], [2, 256 * 1024], [8, 64 * 1024]]) {
+    const channels = Array.from({ length: count }, () => Object.assign(new EventTarget(), {
+      readyState: 'open', bufferedAmount: 0, bufferedAmountLowThreshold: 0, send() {},
+    }))
+    createStreamSender({
+      channels, transferId: '1', signal: new AbortController().signal,
+      protocolVersion: MULTICHANNEL_PROTOCOL, onProgress() {},
+    })
+    for (const channel of channels)
+      assert.equal(channel.bufferedAmountLowThreshold, expectedThreshold)
+  }
+})

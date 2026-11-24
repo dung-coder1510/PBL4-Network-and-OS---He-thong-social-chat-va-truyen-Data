@@ -51,13 +51,21 @@ function DeveloperSettings({ settings, onChange, token }) {
               <option key={count} value={count}>{count} kênh</option>)}
           </select>
         </div>
+        <div className="setting-row">
+          <div><strong>Cho phép chuyển tiếp qua TURN</strong>
+            <p>Tắt (mặc định): khi không đi P2P trực tiếp sẽ chuyển thẳng sang 4 luồng HTTPS thay vì TURN.</p>
+          </div>
+          <button className="toggle" type="button" role="switch" aria-label="Cho phép chuyển tiếp qua TURN cho truyền file"
+            aria-checked={settings.allowTurnForFiles}
+            onClick={() => onChange({ ...settings, allowTurnForFiles: !settings.allowTurnForFiles })} />
+        </div>
       </div>
       <div className="settings-card"><h3>Truyền file qua máy chủ</h3>
         <div className="setting-row">
           <div><label htmlFor="relay-connection-count"><strong>Số kết nối HTTPS</strong></label>
-            <p>Áp dụng từ lượt gửi tiếp theo, gồm cả lúc WebRTC chuyển sang máy chủ. Tổng đệm 4 MB mỗi phiên.</p></div>
+            <p>Áp dụng từ lượt gửi tiếp theo cho cả tải lên và tải xuống đa phần (tắt chế độ nhà phát triển mặc định dùng 4 kết nối).</p></div>
           <select id="relay-connection-count" value={settings.relayConnectionCount}
-            onChange={event => onChange({ ...settings, relayConnectionCount: Number(event.target.value) })}>
+            onChange={event => onChange({ ...settings, relayConnectionCount: Number(event.target.value), relayConfigured: true })}>
             {RELAY_CONNECTION_COUNTS.map(count => <option key={count} value={count}>{count} kết nối</option>)}
           </select>
         </div>

@@ -1,15 +1,19 @@
-import { request, requestFileContent } from './apiClient.js'
+import { request, requestFileContent, requestWithHeaders } from './apiClient.js'
 import { formatFileSize } from '../utils/chatTimeline.js'
 import { waitForTransferring } from './fileTransferState.js'
 import {
-  BUFFER_LOW, CHUNK_BYTES, DEFERRED_HASH_PROTOCOL, LARGE_FILE_WARNING_BYTES, LEGACY_MAX_FILE_BYTES,
-  MAX_FILE_BYTES, MAX_FILE_CHANNELS, MULTICHANNEL_PROTOCOL, PARALLEL_CONNECTION_COUNT,
-  PARALLEL_CONNECTIONS_PROTOCOL, STREAM_PROTOCOLS,
-  createFileReceiver, encodeChunk, sha256, waitForBuffer,
+  BUFFER_LOW, CHUNK_BYTES, DEFERRED_HASH_PROTOCOL, HIGH_SPEED_PROTOCOL, LARGE_FILE_WARNING_BYTES,
+  LEGACY_MAX_FILE_BYTES, MAX_FILE_BYTES, MAX_FILE_CHANNELS, MULTICHANNEL_PROTOCOL, PARALLEL_CONNECTION_COUNT,
+  PARALLEL_CONNECTIONS_PROTOCOL, STREAM_PROTOCOLS, V7_MAX_CHUNK_BYTES, V7_MAX_FILE_WINDOW,
+  createFileReceiver, encodeChunk, filterIceServers, sha256, v7BlockBytes, waitForBuffer,
 } from './fileProtocol.js'
 import { createStreamReceiver, createStreamSender, hashFile, readStreamControl, streamControl, streamHeaderBytes } from './fileStreamProtocol.js'
-import { canSaveFile, createFileStorage, pickFileDestination } from './fileStorage.js'
+import { canSaveFile, createFileStorage, createPartFileStorage, pickFileDestination } from './fileStorage.js'
 import { createRelayUploadBodies, RELAY_CONNECTION_COUNTS } from './fileRelayProtocol.js'
+import {
+  DEFAULT_MULTIPART_CONNECTIONS, RELAY_PART_BYTES, downloadMultipartRelay, uploadMultipartRelay,
+} from './fileRelayMultipart.js'
+import { streamResponseToDisk } from './fileRelayStream.js'
 import { MAX_FILE_WINDOW } from './fileFlowControl.js'
 import { monitorFileRtc } from './fileRtcDiagnostics.js'
 import { createTransferRate } from './fileTransferRate.js'
@@ -21,7 +25,7 @@ function versionNumber(version) {
 }
 
 export function createFileTransfers({ connection: initialConnection, token, userId, onChange, onNotice,
-  confirmLargeFile, onRelayActivity = () => {} }) {
+  confirmLargeFile, onRelayActivity = () => {}, allowTurnForFiles: initialAllowTurn = false }) {
   let connection = null
   const transfers = new Map()
   const pending = new Map()
@@ -59,6 +63,7 @@ export function createFileTransfers({ connection: initialConnection, token, user
   let loadingPage = false
   let relayAvailable = false
   let pollingRelay = false
+  let allowTurnForFiles = initialAllowTurn === true
   const emit = () => {
     if (disposed) return
     changes.dispatchEvent(new Event('change'))
@@ -107,6 +112,7 @@ export function createFileTransfers({ connection: initialConnection, token, user
     for (const { pc } of peer.connections) {
       pc.onicecandidate = null
       pc.onconnectionstatechange = null
+      pc.oniceconnectionstatechange = null
       pc.ondatachannel = null
       pc.close()
     }
@@ -156,18 +162,101 @@ export function createFileTransfers({ connection: initialConnection, token, user
     try {
       const destination = target ?? await pickFileDestination(current.fileName)
       signal.throwIfAborted()
-      job.disk = await createFileStorage(destination, signal, current.fileSizeBytes)
+      const multipart = current.relayMode === 'multipart'
+      const partBytes = current.relayPartBytes || RELAY_PART_BYTES
+      job.disk = multipart
+        ? await createPartFileStorage(destination, signal, current.fileSizeBytes, partBytes)
+        : await createFileStorage(destination, signal, current.fileSizeBytes)
       const result = await request(`${relayPath(id)}/accept`, {
         method: 'POST', body: { transferId: id, expectedVersion: current.version }, token, signal,
       })
       job.active = true
       relayActivity()
       changed(result.transfer)
-      void receiveRelay(id, job, result.receiverKey)
+      if (result.transfer.relayMode === 'multipart')
+        void receiveMultipartRelay(id, result.transfer, partBytes, job, result.receiverKey)
+      else void receiveRelay(id, job, result.receiverKey)
     } catch (error) {
       releaseRelay(id)
       if (error.name !== 'AbortError') throw error
     }
+  }
+
+  async function receiveMultipartRelay(id, transfer, partBytes, job, receiverKey) {
+    const { signal } = job.abort
+    const headers = { 'X-File-Relay-Key': receiverKey }
+    const connectionCount = RELAY_CONNECTION_COUNTS.includes(transfer.relayConnectionCount)
+      ? transfer.relayConnectionCount : DEFAULT_MULTIPART_CONNECTIONS
+    try {
+      const { receivedBytes, expectedSha256Hex } = await downloadMultipartRelay({
+        fileSizeBytes: transfer.fileSizeBytes,
+        partBytes,
+        connectionCount,
+        disk: job.disk,
+        signal,
+        async getPart(partIndex, ack, onChunk) {
+          const params = new URLSearchParams({ key: receiverKey })
+          if (ack !== null) params.set('ack', String(ack))
+          const response = await requestFileContent(`${relayPath(id)}/parts/${partIndex}?${params}`, {
+            token: null, signal,
+          })
+          const sha256Hex = response.headers.get('X-Part-SHA256')
+          if (!response.body || typeof response.body.getReader !== 'function') {
+            const buffer = await response.arrayBuffer()
+            onChunk?.(buffer.byteLength)
+            return { buffer, sha256Hex }
+          }
+          const reader = response.body.getReader()
+          const chunks = []
+          let loaded = 0
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            chunks.push(value)
+            loaded += value.byteLength
+            onChunk?.(value.byteLength)
+          }
+          if (chunks.length === 1 && chunks[0].byteOffset === 0 && chunks[0].byteLength === chunks[0].buffer.byteLength) {
+            return { buffer: chunks[0].buffer, sha256Hex }
+          }
+          const merged = new Uint8Array(loaded)
+          let offset = 0
+          for (const chunk of chunks) {
+            merged.set(chunk, offset)
+            offset += chunk.byteLength
+          }
+          return { buffer: merged.buffer, sha256Hex }
+        },
+        ackParts(partIndices) {
+          return request(`${relayPath(id)}/parts/ack`, {
+            method: 'POST', token: null, signal, headers, body: { partIndices }, timeoutMs: 30000,
+          })
+        },
+        fetchHash() {
+          return request(`${relayPath(id)}/hash`, {
+            method: 'GET', token: null, signal, headers, timeoutMs: 0,
+          })
+        },
+        onProgress: bytes => progress(id, bytes),
+      })
+      phase(id, 'verifying')
+      const verifiedSha256Hex = await job.disk.verify(expectedSha256Hex)
+      phase(id, 'saving')
+      const savedName = await job.disk.commit()
+      transfers.set(id, { ...transfers.get(id), savedLocally: true, savedName, localPhase: 'saved',
+        transferredBytes: receivedBytes })
+      emit()
+      try {
+        const completed = await request(`${relayPath(id)}/complete`, {
+          method: 'POST', token: null, headers, signal, timeoutMs: 30000,
+          body: { transferId: id, expectedVersion: transfers.get(id).version, receivedBytes, verifiedSha256Hex },
+        })
+        changed(completed)
+      } catch { await load().catch(() => {}) }
+      if (!disposed) onNotice(`Đã lưu trên máy: ${savedName}`)
+    } catch (error) {
+      if (!signal.aborted) await failRelay(id, error)
+    } finally { releaseRelay(id) }
   }
 
   // The receive action returns after acceptance so the user can cancel while the writer is active.
@@ -176,17 +265,7 @@ export function createFileTransfers({ connection: initialConnection, token, user
     const headers = { 'X-File-Relay-Key': receiverKey }
     try {
       const response = await requestFileContent(`${relayPath(id)}/content`, { token, signal, headers })
-      const reader = response.body.getReader()
-      let receivedBytes = 0
-      try {
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-          await job.disk.write(receivedBytes, value)
-          receivedBytes += value.byteLength
-          progress(id, receivedBytes)
-        }
-      } finally { reader.releaseLock() }
+      const receivedBytes = await streamResponseToDisk(response, job.disk, signal, bytes => progress(id, bytes))
       phase(id, 'verifying')
       const verifiedSha256Hex = job.disk.verify(response.headers.get('X-File-SHA256'))
       phase(id, 'saving')
@@ -217,9 +296,41 @@ export function createFileTransfers({ connection: initialConnection, token, user
     relayActivity()
     const { signal } = job.abort
     try {
+      if (transfer.relayMode === 'multipart') {
+        let senderKey = selected.senderKey
+        if (!senderKey) {
+          const claimed = await request(`${relayPath(transfer.id)}/session`, { method: 'POST', token, signal })
+          senderKey = selected.senderKey = claimed.senderKey
+        }
+        const connectionCount = RELAY_CONNECTION_COUNTS.includes(transfer.relayConnectionCount)
+          ? transfer.relayConnectionCount : DEFAULT_MULTIPART_CONNECTIONS
+        await uploadMultipartRelay({
+          file,
+          partBytes: transfer.relayPartBytes || RELAY_PART_BYTES,
+          connectionCount,
+          precomputedSha256Hex: transfer.sha256Hex ?? null,
+          signal,
+          putPart(partIndex, buffer, partSha256) {
+            const params = new URLSearchParams({ key: senderKey, sha256: partSha256 })
+            return requestFileContent(`${relayPath(transfer.id)}/parts/${partIndex}?${params}`, {
+              method: 'POST', body: new Blob([buffer], { type: 'text/plain' }), token: null, signal,
+            })
+          },
+          async finalizeHash(sha256Hex) {
+            const finalized = await request(`${relayPath(transfer.id)}/hash`, {
+              method: 'POST', token: null, signal,
+              headers: { 'X-File-Relay-Sender-Key': senderKey },
+              body: { sha256Hex }, timeoutMs: 30000,
+            })
+            changed(finalized)
+          },
+          onProgress: bytes => progress(transfer.id, bytes),
+        })
+        return
+      }
       const sha = transfer.sha256Hex ?? await hashFile(file, signal)
       const settings = await config()
-      const count = Math.min(selected.relayConnectionCount, settings.maximumRelayConnections ?? 1)
+      const count = Math.min(selected.relayConnectionCount ?? 1, settings.maximumRelayConnections ?? 1)
       if (count > 1) {
         changed(await request(`${relayPath(transfer.id)}/upload`, {
           method: 'POST', token, signal, body: { sha256Hex: sha, connectionCount: count },
@@ -275,13 +386,16 @@ export function createFileTransfers({ connection: initialConnection, token, user
         const target = await pickFileDestination(offered.fileName)
         storage.target = target
         storage.abort.signal.throwIfAborted()
-        storage.disk = await createFileStorage(target, storage.abort.signal, offered.fileSizeBytes)
+        storage.disk = diskProtocol === HIGH_SPEED_PROTOCOL
+          ? await createPartFileStorage(target, storage.abort.signal, offered.fileSizeBytes, v7BlockBytes(offered.fileSizeBytes))
+          : await createFileStorage(target, storage.abort.signal, offered.fileSizeBytes)
       }
       await config()
       storage.abort.signal.throwIfAborted()
       const current = transfers.get(id)
       if (disposed || current?.status !== 'offered') throw new Error('Lời mời không còn hiệu lực.')
-      const multipleChannels = diskProtocol === MULTICHANNEL_PROTOCOL || diskProtocol === PARALLEL_CONNECTIONS_PROTOCOL
+      const multipleChannels = diskProtocol === MULTICHANNEL_PROTOCOL ||
+        diskProtocol === PARALLEL_CONNECTIONS_PROTOCOL || diskProtocol === HIGH_SPEED_PROTOCOL
       const channelCount = multipleChannels ? current.requestedChannelCount : 1
       return await invokeAction(method, id, { protocolVersion: diskProtocol || 'file-v1', channelCount })
     } catch (error) {
@@ -301,7 +415,16 @@ export function createFileTransfers({ connection: initialConnection, token, user
         (current.senderId !== userId || pending.has(current.clientTransferId))) {
       switching.add(id)
       try {
-        changed(await request(relayPath(id), { method: 'POST', token, signal: abort.signal }))
+        const settings = await config().catch(() => null)
+        const multipart = settings?.supportsMultipartHttpRelay === true && (settings?.supportsDeferredRelayHash === true || current.sha256Hex != null)
+        const preferred = pending.get(current.clientTransferId)?.relayConnectionCount
+        const connections = RELAY_CONNECTION_COUNTS.includes(preferred) ? preferred : DEFAULT_MULTIPART_CONNECTIONS
+        const path = multipart ? `${relayPath(id)}?mode=multipart&connections=${connections}` : relayPath(id)
+        const { data: switched, headers } = await requestWithHeaders(path, { method: 'POST', token, signal: abort.signal })
+        const senderKey = headers.get('X-File-Relay-Sender-Key')
+        if (senderKey && pending.has(current.clientTransferId))
+          pending.get(current.clientTransferId).senderKey = senderKey
+        changed(switched)
         return
       } catch {
         if (transfers.get(id)?.transport === 'https' || !isFileActive(transfers.get(id))) return
@@ -412,7 +535,7 @@ export function createFileTransfers({ connection: initialConnection, token, user
     phase(id, 'verifying')
     observe(id, 'verifying')
     const current = await waitForTransferring(() => transfers.get(id), changes, peer.abort.signal, 60000, true)
-    const verifiedSha256Hex = peer.disk.verify(current.sha256Hex)
+    const verifiedSha256Hex = await peer.disk.verify(current.sha256Hex)
     phase(id, 'saving')
     const savedName = await peer.disk.commit()
     // Giữ kết quả khi trình duyệt đã chốt file mà kết nối SignalR vừa ngắt.
@@ -462,17 +585,26 @@ export function createFileTransfers({ connection: initialConnection, token, user
         void fail(id, new Error('WebRTC không hỗ trợ kích thước khung truyền.'), true)
         return
       }
+      peer.openedChannels.add(index)
       if (!peer.opened) {
         peer.opened = true
         peer.startDiagnostics()
         observe(id, 'channel-open')
         peer.startedAt = performance.now()
         armTimeout(id)
-        if (sending) void sendFile(id).catch(error =>
-          fail(id, error, peer.channels.some(item => item?.readyState === 'closed' || item?.readyState === 'closing')))
+        if (sending) void sendFile(id).catch(error => {
+          const shouldFallback = peer.channels.some(item => item?.readyState === 'closed' || item?.readyState === 'closing') ||
+            /Kênh truyền|WebRTC|không tiến triển/.test(error?.message || '')
+          return fail(id, error, shouldFallback)
+        })
       }
       if (!sending && peer.streaming) {
-        try { channel.send(streamControl('READY', id, undefined, index, peer.streamReceiver.capabilities)) }
+        try {
+          const capabilities = peer.protocolVersion === HIGH_SPEED_PROTOCOL
+            ? peer.streamReceiver.negotiateConnection(pc.sctp?.maxMessageSize)
+            : peer.streamReceiver.capabilities
+          channel.send(streamControl('READY', id, undefined, index, capabilities))
+        }
         catch (error) { void fail(id, error, true) }
       }
     }
@@ -481,8 +613,9 @@ export function createFileTransfers({ connection: initialConnection, token, user
         try {
           if (sending) peer.sender.handle(event.data, index)
           else if (typeof event.data === 'string') {
-            if (readStreamControl(event.data, id, index).type !== 'END') throw new Error('Khung ngoài giao thức.')
-            if (peer.streamReceiver.end(index)) void receiveStreamEnd(id).catch(error => fail(id, error))
+            const control = readStreamControl(event.data, id, index)
+            if (control.type !== 'END') throw new Error('Khung ngoài giao thức.')
+            if (peer.streamReceiver.end(index, control.activeChannels)) void receiveStreamEnd(id).catch(error => fail(id, error))
           } else void peer.streamReceiver.push(event.data, index).catch(error => fail(id, error))
         } catch (error) { void fail(id, error) }
         return
@@ -498,39 +631,50 @@ export function createFileTransfers({ connection: initialConnection, token, user
     }
     channel.onclose = () => {
       if (!isFileActive(transfers.get(id)) || peer.verifying) return
+      if (peer.protocolVersion === HIGH_SPEED_PROTOCOL && index > 0 && !peer.openedChannels.has(index) &&
+          !peer.failedConnections.has(0)) return
       // Tiến độ ở các kênh còn mở không kéo dài thời gian chờ xác nhận của kênh đã đóng.
       peer.closeTimeout ??= setTimeout(() => {
         if (isFileActive(transfers.get(id)) && !peer.verifying)
           void fail(id, new Error('Kênh truyền đã đóng trước khi xác nhận.'), true)
       }, 2000)
     }
-    channel.onerror = () => void fail(id, new Error('Lỗi kênh WebRTC.'), true)
+    channel.onerror = () => {
+      if (peer.protocolVersion === HIGH_SPEED_PROTOCOL && index > 0 && !peer.openedChannels.has(index) &&
+          !peer.failedConnections.has(0)) return
+      void fail(id, new Error('Lỗi kênh WebRTC.'), true)
+    }
   }
 
   function createPeer(transfer, iceServers) {
     if (peers.has(transfer.id)) return peers.get(transfer.id)
     const sending = transfer.senderId === userId
     const streaming = STREAM_PROTOCOLS.includes(transfer.protocolVersion)
-    const parallelConnections = transfer.protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL
-    const multipleChannels = parallelConnections || transfer.protocolVersion === MULTICHANNEL_PROTOCOL
+    const highSpeed = transfer.protocolVersion === HIGH_SPEED_PROTOCOL
+    const parallelConnections = transfer.protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL ||
+      (highSpeed && transfer.channelCount > 1)
+    const multipleChannels = parallelConnections || transfer.protocolVersion === MULTICHANNEL_PROTOCOL || highSpeed
     const channelCount = multipleChannels ? transfer.channelCount : 1
     if (!Number.isInteger(channelCount) || channelCount < 1 || channelCount > MAX_FILE_CHANNELS ||
-        (parallelConnections && channelCount !== PARALLEL_CONNECTION_COUNT))
+        (transfer.protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL && channelCount !== PARALLEL_CONNECTION_COUNT) ||
+        (highSpeed && ![1, 2, 4].includes(channelCount)))
       throw new Error('Số kênh truyền file không hợp lệ.')
     const storage = receiving.get(transfer.id)
     if (streaming && !sending && !storage?.disk)
       throw new Error('Vị trí lưu file không còn khả dụng. Hãy nhận lại.')
     const peer = {
       connections: [], streaming, channels: new Array(channelCount), opened: false,
+      openedChannels: new Set(), failedConnections: new Set(),
       protocolVersion: transfer.protocolVersion, disk: storage?.disk, abort: storage?.abort || new AbortController(),
       receiver: sending || streaming ? null : createFileReceiver(transfer.fileSizeBytes),
       startedAt: performance.now(),
       lastUpdate: 0, verifying: false,
     }
     peers.set(transfer.id, peer)
-    const connectionCount = parallelConnections ? PARALLEL_CONNECTION_COUNT : 1
+    const effectiveIceServers = filterIceServers(iceServers, allowTurnForFiles)
+    const connectionCount = parallelConnections ? channelCount : 1
     for (let connectionIndex = 0; connectionIndex < connectionCount; connectionIndex++) {
-      const pc = new RTCPeerConnection({ iceServers })
+      const pc = new RTCPeerConnection({ iceServers: effectiveIceServers })
       const rtc = { pc, candidates: [], incoming: Promise.resolve(), outgoing: Promise.resolve() }
       peer.connections.push(rtc)
       pc.onicecandidate = event => {
@@ -539,9 +683,18 @@ export function createFileTransfers({ connection: initialConnection, token, user
           sendSignal(transfer.id, connectionIndex, 'ice', JSON.stringify(event.candidate.toJSON())))
           .catch(error => fail(transfer.id, error, true))
       }
+      const handleConnectionFailure = () => {
+        peer.failedConnections.add(connectionIndex)
+        if (peer.protocolVersion === HIGH_SPEED_PROTOCOL && connectionIndex > 0 &&
+            !peer.openedChannels.has(connectionIndex) && !peer.failedConnections.has(0)) return
+        void fail(transfer.id,
+          new Error('Không kết nối được WebRTC. Đang chuyển sang HTTPS hoặc kiểm tra mạng.'), true)
+      }
       pc.onconnectionstatechange = () => {
-        if (pc.connectionState === 'failed') void fail(transfer.id,
-          new Error('Không kết nối được WebRTC. Mạng khác NAT có thể cần TURN.'), true)
+        if (pc.connectionState === 'failed') handleConnectionFailure()
+      }
+      pc.oniceconnectionstatechange = () => {
+        if (pc.iceConnectionState === 'failed') handleConnectionFailure()
       }
       pc.ondatachannel = event => attachChannel(transfer.id, event.channel, false, connectionIndex)
     }
@@ -557,8 +710,11 @@ export function createFileTransfers({ connection: initialConnection, token, user
       if (streaming) peer.sender = createStreamSender({ ...streamOptions, channels: peer.channels, transferId: transfer.id })
     } else if (streaming) {
       peer.streamReceiver = createStreamReceiver({ ...streamOptions, size: transfer.fileSizeBytes, channelCount,
-        maxWindowBytes: MAX_FILE_WINDOW,
-        write: (offset, data) => peer.disk.write(offset, data),
+        maxWindowBytes: highSpeed ? V7_MAX_FILE_WINDOW : MAX_FILE_WINDOW,
+        maxChunkBytes: highSpeed ? V7_MAX_CHUNK_BYTES : CHUNK_BYTES,
+        ...(highSpeed
+          ? { writePart: (blockIndex, offset, data) => peer.disk.writePart(blockIndex, offset, data) }
+          : { write: (offset, data) => peer.disk.write(offset, data) }),
         acknowledge: (bytes, details) => peer.channels[0].send(streamControl('ACK', transfer.id, bytes, 0, details)),
       })
     }
@@ -566,6 +722,11 @@ export function createFileTransfers({ connection: initialConnection, token, user
       onUpdate: connections => {
         const current = transfers.get(transfer.id)
         if (peers.get(transfer.id) !== peer || disposed || !isFileActive(current) || current.transport === 'https') return
+        if (!allowTurnForFiles && relayAvailable && !peer.verifying &&
+            connections.some(item => item.route === 'turn')) {
+          void fail(transfer.id, new Error('Ưu tiên chuyển tiếp qua HTTPS thay vì TURN.'), true)
+          return
+        }
         const latencies = connections.map(item => item.roundTripMs).filter(value => value !== null)
         peer.roundTripMs = latencies.length ? Math.max(...latencies) : null
         const rate = peer.rate?.sample(current.transferredBytes || 0)
@@ -574,7 +735,8 @@ export function createFileTransfers({ connection: initialConnection, token, user
         emit()
       },
     })
-    armTimeout(transfer.id, 45000)
+    const handshakeTimeoutMs = !allowTurnForFiles && relayAvailable ? 8000 : 15000
+    armTimeout(transfer.id, handshakeTimeoutMs)
     return peer
   }
 
@@ -766,8 +928,9 @@ export function createFileTransfers({ connection: initialConnection, token, user
   const relayPoll = setInterval(pollRelay, 1000)
   return {
     load, loadConversation, action, disconnected, forgetDownload, setConnection,
+    setAllowTurnForFiles(enabled) { allowTurnForFiles = enabled === true },
     async offer(conversationId, file, preferredChannelCount = null, useParallelConnections = null, transport = 'webrtc',
-      relayConnectionCount = 1) {
+      relayConnectionCount = null) {
       if (!file || !Number.isSafeInteger(file.size) || file.size < 0 || file.size > MAX_FILE_BYTES)
         throw new Error(`Tệp vượt dung lượng gửi cho phép (${formatFileSize(MAX_FILE_BYTES)}).`)
       if (!globalThis.crypto?.subtle) throw new Error('Truyền file cần HTTPS hoặc localhost.')
@@ -776,7 +939,7 @@ export function createFileTransfers({ connection: initialConnection, token, user
       if (pending.size >= 2) throw new Error('Tab này đã có 2 tệp đang chờ hoặc đang gửi.')
       const clientTransferId = crypto.randomUUID()
       pending.set(clientTransferId, { file,
-        relayConnectionCount: RELAY_CONNECTION_COUNTS.includes(relayConnectionCount) ? relayConnectionCount : 1 })
+        relayConnectionCount: RELAY_CONNECTION_COUNTS.includes(relayConnectionCount) ? relayConnectionCount : null })
       try {
         const settings = await config()
         if (file.size > (settings.maximumFileBytes ?? MAX_FILE_BYTES))
@@ -784,15 +947,28 @@ export function createFileTransfers({ connection: initialConnection, token, user
         const webRtcAvailable = globalThis.RTCPeerConnection && connection?.state === 'Connected'
         if (transport === 'https' || (!webRtcAvailable && settings.supportsHttpFileRelay)) {
           if (!settings.supportsHttpFileRelay) throw new Error('Máy chủ chưa hỗ trợ chuyển tiếp qua HTTPS.')
-          const sha256Hex = await hashFile(file, abort.signal)
-          const result = await request('/files/relay', { method: 'POST', token, signal: abort.signal,
-            body: { conversationId, clientTransferId, fileName: file.name, fileSizeBytes: file.size, sha256Hex },
+          const multipart = settings.supportsMultipartHttpRelay === true
+          const deferredRelayHash = multipart && settings.supportsDeferredRelayHash === true
+          const relayConnections = multipart
+            ? (RELAY_CONNECTION_COUNTS.includes(relayConnectionCount)
+              ? relayConnectionCount : (settings.defaultRelayConnections ?? DEFAULT_MULTIPART_CONNECTIONS))
+            : 1
+          const sha256Hex = deferredRelayHash ? null : await hashFile(file, abort.signal)
+          const { data: result, headers } = await requestWithHeaders('/files/relay', {
+            method: 'POST', token, signal: abort.signal,
+            body: {
+              conversationId, clientTransferId, fileName: file.name, fileSizeBytes: file.size, sha256Hex,
+              ...(multipart ? { relayMode: 'multipart', relayConnectionCount: relayConnections } : {}),
+            },
           })
+          const senderKey = headers.get('X-File-Relay-Sender-Key')
+          if (senderKey && pending.has(clientTransferId)) pending.get(clientTransferId).senderKey = senderKey
           changed(result)
           return result
         }
         if (!webRtcAvailable) throw new Error('Chưa có kết nối WebRTC hoặc SignalR.')
         const large = file.size > LEGACY_MAX_FILE_BYTES
+        const supportsV7 = settings.supportsWebRtcV7 === true
         // Chế độ thường chọn hai kết nối cho file lớn khi backend hỗ trợ.
         // Giá trị false từ nhà phát triển vẫn giữ lựa chọn kênh thủ công.
         const parallelConnections = useParallelConnections ?? (preferredChannelCount === null && large &&
@@ -804,10 +980,14 @@ export function createFileTransfers({ connection: initialConnection, token, user
         const supportedProtocols = large
           ? [settings.supportsDeferredHash && typeof globalThis.Worker === 'function' ? DEFERRED_HASH_PROTOCOL : 'file-v3']
           : ['file-v1', 'file-v2']
-        if (experimental) supportedProtocols.unshift(MULTICHANNEL_PROTOCOL)
+        if (experimental || (!large && preferredChannelCount === null && !parallelConnections && settings.maximumFileChannels >= 1))
+          supportedProtocols.unshift(MULTICHANNEL_PROTOCOL)
         if (parallelConnections && settings.supportsParallelFileConnections &&
             requestedChannelCount === PARALLEL_CONNECTION_COUNT)
           supportedProtocols.unshift(PARALLEL_CONNECTIONS_PROTOCOL)
+        const manualMultiChannel = !parallelConnections && preferredChannelCount !== null && useParallelConnections === false
+        if (supportsV7 && !manualMultiChannel && settings.maximumFileChannels >= requestedChannelCount)
+          supportedProtocols.unshift(HIGH_SPEED_PROTOCOL)
         const deferred = supportedProtocols.includes(DEFERRED_HASH_PROTOCOL)
         const sha256Hex = deferred ? null : await hashFile(file, abort.signal)
         if (disposed || !pending.has(clientTransferId) || connection?.state !== 'Connected')

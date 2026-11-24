@@ -9,9 +9,33 @@ export const PARALLEL_CONNECTION_COUNT = 2
 export const DEFERRED_HASH_PROTOCOL = 'file-v4'
 export const MULTICHANNEL_PROTOCOL = 'file-v5'
 export const PARALLEL_CONNECTIONS_PROTOCOL = 'file-v6'
+export const HIGH_SPEED_PROTOCOL = 'file-v7'
+export const V7_MAX_CHUNK_BYTES = 64 * 1024
+export const V7_BLOCK_BYTES = 1024 * 1024
+export const V7_SMALL_BLOCK_BYTES = 256 * 1024
+export const V7_SEND_BUFFER_PER_CONNECTION = 512 * 1024
+export const V7_INITIAL_FILE_WINDOW = 4 * 1024 * 1024
+export const V7_MAX_FILE_WINDOW = 16 * 1024 * 1024
+export const V7_MAX_OUT_OF_ORDER_BLOCKS = 16
+export const v7BlockBytes = size => size > 2 * 1024 * 1024 ? V7_BLOCK_BYTES : V7_SMALL_BLOCK_BYTES
 export const STREAM_PROTOCOLS = [
-  'file-v2', 'file-v3', DEFERRED_HASH_PROTOCOL, MULTICHANNEL_PROTOCOL, PARALLEL_CONNECTIONS_PROTOCOL,
+  'file-v2', 'file-v3', DEFERRED_HASH_PROTOCOL, MULTICHANNEL_PROTOCOL, PARALLEL_CONNECTIONS_PROTOCOL, HIGH_SPEED_PROTOCOL,
 ]
+
+export function filterIceServers(iceServers, allowTurn = false) {
+  if (allowTurn) return Array.isArray(iceServers) ? iceServers : []
+  if (!Array.isArray(iceServers)) return []
+  const filtered = []
+  for (const server of iceServers) {
+    if (!server) continue
+    const raw = server.urls ?? server.url
+    const urls = Array.isArray(raw) ? raw : (typeof raw === 'string' ? [raw] : [])
+    const directUrls = urls.filter(url => typeof url === 'string' && !/^turns?:/i.test(url.trim()))
+    if (directUrls.length === 0) continue
+    filtered.push({ ...server, urls: Array.isArray(raw) ? directUrls : directUrls[0] })
+  }
+  return filtered
+}
 
 export async function sha256(buffer) {
   const digest = await crypto.subtle.digest('SHA-256', buffer)
@@ -64,8 +88,10 @@ export function waitForBuffer(channel, signal, nextBytes = 0, highWaterMark = BU
   if (channel.bufferedAmount + nextBytes <= highWaterMark) return Promise.resolve()
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => finish(new Error('Kênh truyền bị nghẽn quá 30 giây.')), 30000)
+    const poll = setInterval(pollDrained, 50)
     function finish(error) {
       clearTimeout(timer)
+      clearInterval(poll)
       channel.removeEventListener('bufferedamountlow', drained)
       channel.removeEventListener('close', closed)
       channel.removeEventListener('error', closed)
@@ -73,8 +99,14 @@ export function waitForBuffer(channel, signal, nextBytes = 0, highWaterMark = BU
       if (error) reject(error)
       else resolve()
     }
-    const drained = () => {
+    function drained() {
       if (channel.bufferedAmount + nextBytes <= highWaterMark) finish()
+    }
+    function pollDrained() {
+      const lowLimit = Number.isFinite(channel.bufferedAmountLowThreshold) && channel.bufferedAmountLowThreshold > 0
+        ? Math.min(highWaterMark - nextBytes, channel.bufferedAmountLowThreshold)
+        : highWaterMark - nextBytes
+      if (channel.bufferedAmount <= lowLimit) finish()
     }
     const closed = () => finish(new Error('Kênh truyền đã đóng.'))
     const aborted = () => finish(new DOMException('Đã hủy', 'AbortError'))

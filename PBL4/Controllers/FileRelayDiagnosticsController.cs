@@ -54,7 +54,6 @@ public sealed class FileRelayDiagnosticsController : ControllerBase
             for (var remaining = bytes; remaining > 0; remaining -= Math.Min(remaining, buffer.Length))
             {
                 await Response.Body.WriteAsync(buffer.AsMemory(0, Math.Min(remaining, buffer.Length)), ct);
-                await Response.Body.FlushAsync(ct);
             }
             return new EmptyResult();
         }

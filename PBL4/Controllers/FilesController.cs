@@ -21,18 +21,31 @@ public sealed class FilesController(FileTransferService files, IConfiguration co
     }
 
     [HttpGet("configuration")]
-    public async Task<IActionResult> Configuration(CancellationToken ct) => Ok(new
+    public async Task<IActionResult> Configuration(CancellationToken ct)
     {
-        maximumFileBytes = FileTransferService.MaximumFileBytes,
-        legacyMaximumFileBytes = FileTransferService.LegacyMaximumFileBytes,
-        maximumFileChannels = FileTransferService.MaximumFileChannels,
-        supportsParallelFileConnections = true,
-        supportsHttpFileRelay = true,
-        maximumRelayBufferBytes = FileRelayPipe.MaximumBufferBytes,
-        maximumRelayConnections = 4,
-        supportsDeferredHash = await FileTransferService.SupportsDeferredHashAsync(db, ct),
-        iceServers = configuration.GetSection("WebRtc:IceServers").Get<IceServer[]>() ?? []
-    });
+        var supportsDeferred = await FileTransferService.SupportsDeferredHashAsync(db, ct);
+        return Ok(new
+        {
+            maximumFileBytes = FileTransferService.MaximumFileBytes,
+            legacyMaximumFileBytes = FileTransferService.LegacyMaximumFileBytes,
+            maximumFileChannels = FileTransferService.MaximumFileChannels,
+            supportsParallelFileConnections = true,
+            supportsWebRtcV7 = true,
+            maximumParallelFileConnections = FileTransferService.MaximumParallelFileConnections,
+            defaultParallelFileConnections = 2,
+            v7MaxChunkBytes = 65536,
+            v7BlockBytes = 1048576,
+            supportsHttpFileRelay = true,
+            supportsMultipartHttpRelay = true,
+            relayPartBytes = FileRelayPartStore.DefaultPartBytes,
+            defaultRelayConnections = 4,
+            supportsDeferredRelayHash = supportsDeferred,
+            maximumRelayBufferBytes = FileRelayPipe.MaximumBufferBytes,
+            maximumRelayConnections = 4,
+            supportsDeferredHash = supportsDeferred,
+            iceServers = configuration.GetSection("WebRtc:IceServers").Get<IceServer[]>() ?? []
+        });
+    }
 
     public sealed record IceServer(string[] Urls, string? Username, string? Credential);
 

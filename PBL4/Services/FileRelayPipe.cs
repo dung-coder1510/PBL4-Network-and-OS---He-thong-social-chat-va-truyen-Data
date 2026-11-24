@@ -76,7 +76,6 @@ internal sealed class FileRelayPipe
                 }
                 var block = await ready[channel].Reader.ReadAsync(ct);
                 await destination.WriteAsync(buffer.AsMemory(block.Slot * BlockBytes, block.Length), ct);
-                await destination.FlushAsync(ct);
                 forwarded(block.Length);
                 free[channel].Writer.TryWrite(block.Slot);
             }

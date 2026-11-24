@@ -3,7 +3,7 @@ import { conversationsApi } from '../services/conversationsApi.js'
 import { isFileActive } from '../services/fileTransfers.js'
 import { canSaveFile } from '../services/fileStorage.js'
 import { localFileStatus } from '../services/fileTransferState.js'
-import { LEGACY_MAX_FILE_BYTES, PARALLEL_CONNECTIONS_PROTOCOL } from '../services/fileProtocol.js'
+import { HIGH_SPEED_PROTOCOL, LEGACY_MAX_FILE_BYTES, PARALLEL_CONNECTIONS_PROTOCOL } from '../services/fileProtocol.js'
 import { formatFileSize as size } from '../utils/chatTimeline.js'
 import { useFileTransfers } from '../realtime/fileTransferContext.js'
 import { useChatRealtime } from '../realtime/chatRealtimeContext.js'
@@ -118,12 +118,17 @@ export default function FilesPage({ token, user, onSessionExpired }) {
                 <small>{size(transfer.transferredBytes)} / {size(transfer.fileSizeBytes)} · {size(transfer.bytesPerSecond || 0)}/s</small>
               </div>}
               {!relay && files.developerMode && transfer.acceptedAt && transfer.channelCount > 0 && <small>
-                {transfer.protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL ? '2 kết nối riêng' : `${transfer.channelCount} kênh`}
+                {transfer.protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL ||
+                  (transfer.protocolVersion === HIGH_SPEED_PROTOCOL && transfer.channelCount > 1)
+                  ? `${transfer.channelCount} kết nối riêng` : `${transfer.channelCount} kênh`}
+                {transfer.protocolVersion === HIGH_SPEED_PROTOCOL ? ' · v7' : ''}
                 {!active && (transfer.averageBytesPerSecond || transfer.bytesPerSecond) > 0
                   ? ` · ${size(transfer.averageBytesPerSecond || transfer.bytesPerSecond)}/s` : ''}
               </small>}
               {relay && files.developerMode && transfer.relayConnectionCount > 1 &&
-                <small>{transfer.relayConnectionCount} kết nối tải lên HTTPS</small>}
+                <small>{transfer.relayMode === 'multipart'
+                  ? `${transfer.relayConnectionCount} kết nối HTTPS (tải lên & xuống)`
+                  : `${transfer.relayConnectionCount} kết nối tải lên HTTPS`}</small>}
               {!relay && <FileRtcDiagnostics stats={transfer.rtcDiagnostics} developerMode={files.developerMode} />}
               {active && !canRespond && !ownEndpoint && <small>Đang xử lý ở tab khác.</small>}
               {transfer.error && <p role="status">{transfer.error}</p>}

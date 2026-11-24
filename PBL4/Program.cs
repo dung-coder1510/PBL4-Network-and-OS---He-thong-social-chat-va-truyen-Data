@@ -45,7 +45,7 @@ namespace PBL4
                     policy => policy.WithOrigins(allowedOrigins)
                                     .AllowAnyMethod()
                                     .AllowAnyHeader()
-                                    .WithExposedHeaders("X-File-SHA256")
+                                    .WithExposedHeaders("X-File-SHA256", "X-Part-SHA256", "X-File-Relay-Sender-Key")
                                     .AllowCredentials());
             });
             builder.Services.AddDbContext<AppDbContext>(options =>
@@ -124,8 +124,15 @@ namespace PBL4
             // quan sát không làm sai biểu đồ tải. Route template tránh mỗi ID tạo một nhóm.
             app.Use(async (context, next) =>
             {
-                if (!context.Request.Path.StartsWithSegments("/api") ||
-                    context.Request.Path.StartsWithSegments("/api/v1/admin/monitoring"))
+                var path = context.Request.Path;
+                var isBinaryRelayContent = path.StartsWithSegments("/api/v1/files") &&
+                    (path.Equals("/api/v1/files/relay/diagnostics", StringComparison.OrdinalIgnoreCase) ||
+                     (path.Value?.EndsWith("/relay/content", StringComparison.OrdinalIgnoreCase) ?? false) ||
+                     ((path.Value?.Contains("/relay/parts/", StringComparison.OrdinalIgnoreCase) ?? false) &&
+                      !(path.Value?.EndsWith("/ack", StringComparison.OrdinalIgnoreCase) ?? false)));
+                if (!path.StartsWithSegments("/api") ||
+                    path.StartsWithSegments("/api/v1/admin/monitoring") ||
+                    isBinaryRelayContent)
                 { await next(); return; }
                 var start = System.Diagnostics.Stopwatch.GetTimestamp();
                 var monitoring = context.RequestServices.GetRequiredService<MonitoringService>();

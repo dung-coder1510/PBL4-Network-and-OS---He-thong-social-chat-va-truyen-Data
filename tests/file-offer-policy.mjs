@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createFileTransfers } from '../frontend/src/services/fileTransfers.js'
 import { LEGACY_MAX_FILE_BYTES, MAX_FILE_BYTES } from '../frontend/src/services/fileProtocol.js'
 
-async function offer(t, { capabilities = {}, count, parallel, small = false, transport = 'webrtc' } = {}) {
+async function offer(t, { capabilities = {}, count, parallel, small = false, transport = 'webrtc', relayCount = null } = {}) {
   const settings = { maximumFileBytes: MAX_FILE_BYTES, maximumFileChannels: 8,
     supportsDeferredHash: true, supportsParallelFileConnections: true, supportsHttpFileRelay: true,
     iceServers: [], ...capabilities }
@@ -40,7 +40,7 @@ async function offer(t, { capabilities = {}, count, parallel, small = false, tra
     name: 'large.bin', size: LEGACY_MAX_FILE_BYTES + 1,
     slice() { throw new Error('The deferred offer read the whole file before acceptance') },
   }
-  await manager.offer('1', file, count, parallel, transport)
+  await manager.offer('1', file, count, parallel, transport, relayCount)
   assert.equal(calls.length, 1)
   return calls[0]
 }
@@ -52,6 +52,18 @@ test('normal large-file offers automatically negotiate two separate connections 
   assert.ok(body.supportedProtocols.includes('file-v5'))
   assert.ok(body.supportedProtocols.includes('file-v4'))
   assert.equal(body.sha256Hex, null)
+})
+
+test('normal offers prefer file-v7 when server advertises supportsWebRtcV7', async t => {
+  const { body: largeBody } = await offer(t, { capabilities: { supportsWebRtcV7: true } })
+  assert.equal(largeBody.requestedChannelCount, 2)
+  assert.deepEqual(largeBody.supportedProtocols, ['file-v7', 'file-v6', 'file-v5', 'file-v4'])
+  assert.equal(largeBody.sha256Hex, null)
+
+  const { body: smallBody } = await offer(t, { small: true, capabilities: { supportsWebRtcV7: true } })
+  assert.equal(smallBody.requestedChannelCount, 1)
+  assert.deepEqual(smallBody.supportedProtocols, ['file-v7', 'file-v5', 'file-v1', 'file-v2'])
+  assert.equal(typeof smallBody.sha256Hex, 'string')
 })
 
 test('developer choice of one channel overrides automatic selection', async t => {
@@ -76,10 +88,10 @@ for (const capabilities of [{ supportsParallelFileConnections: false },
     assert.ok(body.supportedProtocols.includes('file-v4'))
   })
 
-test('small normal file retains its existing protocols and one channel', async t => {
+test('small normal file prefers batched single-channel streaming when the server supports channels', async t => {
   const { body } = await offer(t, { small: true })
   assert.equal(body.requestedChannelCount, 1)
-  assert.deepEqual(body.supportedProtocols, ['file-v1', 'file-v2'])
+  assert.deepEqual(body.supportedProtocols, ['file-v5', 'file-v1', 'file-v2'])
   assert.equal(typeof body.sha256Hex, 'string')
 })
 
@@ -95,4 +107,25 @@ test('explicit HTTPS continues through its REST offer without a WebRTC negotiati
   assert.equal(call.method, 'HTTPS')
   assert.equal(call.body.requestedChannelCount, undefined)
   assert.equal(typeof call.body.sha256Hex, 'string')
+})
+
+test('normal HTTPS multipart offer defaults to 4 parallel connections without pre-hashing the source', async t => {
+  const call = await offer(t, {
+    transport: 'https',
+    capabilities: { supportsMultipartHttpRelay: true, supportsDeferredRelayHash: true, defaultRelayConnections: 4 },
+  })
+  assert.equal(call.method, 'HTTPS')
+  assert.equal(call.body.relayMode, 'multipart')
+  assert.equal(call.body.relayConnectionCount, 4)
+  assert.equal(call.body.sha256Hex, null)
+})
+
+test('developer HTTPS relay connection override is preserved on multipart offers', async t => {
+  const call = await offer(t, {
+    transport: 'https',
+    relayCount: 2,
+    capabilities: { supportsMultipartHttpRelay: true, supportsDeferredRelayHash: true, defaultRelayConnections: 4 },
+  })
+  assert.equal(call.body.relayMode, 'multipart')
+  assert.equal(call.body.relayConnectionCount, 2)
 })

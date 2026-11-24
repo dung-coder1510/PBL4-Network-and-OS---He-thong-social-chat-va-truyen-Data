@@ -15,10 +15,18 @@ public sealed partial class FileTransferService(IServiceScopeFactory scopes,
     public const long MaximumFileBytes = 10L * 1024 * 1024 * 1024;
     public const long LegacyMaximumFileBytes = 100L * 1024 * 1024;
     public const int MaximumFileChannels = 8;
+    public const int MaximumParallelFileConnections = 4;
     private const int ParallelConnectionCount = 2;
     private const string DeferredHashProtocol = "file-v4";
     private const string MultichannelProtocol = "file-v5";
     private const string ParallelConnectionsProtocol = "file-v6";
+    private const string HighSpeedProtocol = "file-v7";
+
+    private static bool IsDeferredCapableProtocol(string protocol) => protocol is
+        DeferredHashProtocol or MultichannelProtocol or ParallelConnectionsProtocol or HighSpeedProtocol;
+
+    private static bool IsLargeCapableProtocol(string protocol) => protocol is
+        "file-v3" or DeferredHashProtocol or MultichannelProtocol or ParallelConnectionsProtocol or HighSpeedProtocol;
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly Dictionary<long, EndpointPair> active = [];
 
@@ -73,23 +81,33 @@ public sealed partial class FileTransferService(IServiceScopeFactory scopes,
             request.FileName.Any(character => char.IsControl(character) || character is '/' or '\\'))
             throw new HubException("Thông tin tệp không hợp lệ (tối đa 10737.4 MB).");
         if (request.RequestedChannelCount is < 1 or > MaximumFileChannels ||
-            request.SupportedProtocols is { Length: > 4 } || request.SupportedProtocols?.Any(protocol =>
+            request.SupportedProtocols is { Length: > 6 } || request.SupportedProtocols?.Any(protocol =>
                 protocol is not ("file-v1" or "file-v2" or "file-v3" or DeferredHashProtocol or
-                    MultichannelProtocol or ParallelConnectionsProtocol)) == true)
+                    MultichannelProtocol or ParallelConnectionsProtocol or HighSpeedProtocol)) == true)
             throw new HubException("Giao thức hoặc số kênh truyền file không hợp lệ.");
+        if (request.RelayMode is not null && (!relay || request.RelayMode != "multipart"))
+            throw new HubException("Chế độ chuyển tiếp tệp không hợp lệ.");
+        if (request.RelayMode == "multipart" && request.RelayConnectionCount is not (1 or 2 or 4))
+            throw new HubException("Chế độ đa phần cần 1, 2 hoặc 4 kết nối.");
         var protocols = request.SupportedProtocols is { Length: > 0 }
             ? request.SupportedProtocols.Distinct().ToArray() : ["file-v1"];
         var offersParallelConnections = protocols.Contains(ParallelConnectionsProtocol);
+        var offersHighSpeed = protocols.Contains(HighSpeedProtocol);
         if (offersParallelConnections && request.RequestedChannelCount != ParallelConnectionCount)
             throw new HubException("Chế độ hai kết nối cần đúng hai kênh.");
-        if (request.RequestedChannelCount > 1 && !offersParallelConnections && !protocols.Contains(MultichannelProtocol))
+        if (offersHighSpeed && !offersParallelConnections && !protocols.Contains(MultichannelProtocol) &&
+            request.RequestedChannelCount is not (1 or 2 or MaximumParallelFileConnections))
+            throw new HubException("Giao thức file-v7 cần 1, 2 hoặc 4 kết nối.");
+        if (request.RequestedChannelCount > 1 && !offersParallelConnections &&
+            !protocols.Contains(MultichannelProtocol) && !offersHighSpeed)
             throw new HubException("Truyền từ 2 đến 8 kênh cần giao thức đa kênh.");
-        var deferredHash = !relay && request.Sha256Hex is null &&
-            protocols.All(protocol => protocol is DeferredHashProtocol or MultichannelProtocol or ParallelConnectionsProtocol);
+        var multipartRelay = relay && request.RelayMode == "multipart";
+        var deferredHash = (!relay && request.Sha256Hex is null &&
+            protocols.All(IsDeferredCapableProtocol)) ||
+            (multipartRelay && request.Sha256Hex is null);
         if (protocols.Contains(DeferredHashProtocol) && (!deferredHash || request.FileSizeBytes <= LegacyMaximumFileBytes))
             throw new HubException("Lời mời file-v4 chỉ dùng cho tệp lớn và chốt SHA-256 trong lúc truyền.");
-        if (!relay && request.FileSizeBytes > LegacyMaximumFileBytes && !protocols.Any(protocol =>
-                protocol is "file-v3" or DeferredHashProtocol or MultichannelProtocol or ParallelConnectionsProtocol))
+        if (!relay && request.FileSizeBytes > LegacyMaximumFileBytes && !protocols.Any(IsLargeCapableProtocol))
             throw new HubException("Tệp trên 104.9 MB cần phiên bản truyền theo luồng mới ở cả hai máy.");
         var hash = deferredHash ? null : ParseHash(request.Sha256Hex);
         await gate.WaitAsync();
@@ -136,8 +154,10 @@ public sealed partial class FileTransferService(IServiceScopeFactory scopes,
                 SupportedProtocols = protocols,
                 RequestedChannelCount = request.RequestedChannelCount,
                 SenderSession = sessionId,
-                Relay = relay ? new RelaySession(sessionId!) : null
+                Relay = relay ? new RelaySession(sessionId!, multipartRelay, multipartRelay ? request.RelayConnectionCount : 1) : null
             };
+            if (endpoints.Relay is not null && hash is not null)
+                endpoints.Relay.HashReady.TrySetResult(Convert.ToHexString(hash).ToLowerInvariant());
             active.Add(transfer.Id, endpoints);
             return await PublishAsync(transfer, endpoints);
         }
@@ -182,32 +202,37 @@ public sealed partial class FileTransferService(IServiceScopeFactory scopes,
                         throw new HubException("Tab gửi đã ngắt kết nối.");
                     var protocol = request.ProtocolVersion ?? "file-v1";
                     var parallelConnections = protocol == ParallelConnectionsProtocol;
-                    var maxChannels = protocol is MultichannelProtocol or ParallelConnectionsProtocol
+                    var highSpeed = protocol == HighSpeedProtocol;
+                    var maxChannels = protocol is MultichannelProtocol or ParallelConnectionsProtocol or HighSpeedProtocol
                         ? endpoints.RequestedChannelCount : 1;
                     if (request.ChannelCount < 1 || request.ChannelCount > maxChannels ||
-                        parallelConnections && request.ChannelCount != ParallelConnectionCount ||
+                        (parallelConnections && request.ChannelCount != ParallelConnectionCount) ||
+                        (highSpeed && request.ChannelCount is not (1 or 2 or MaximumParallelFileConnections)) ||
                         !endpoints.SupportedProtocols.Contains(protocol) ||
-                        transfer.FileSizeBytes > LegacyMaximumFileBytes &&
-                        protocol is not ("file-v3" or DeferredHashProtocol or MultichannelProtocol or ParallelConnectionsProtocol))
+                        (transfer.FileSizeBytes > LegacyMaximumFileBytes && !IsLargeCapableProtocol(protocol)))
                         throw new HubException("Hai tab chưa hỗ trợ cùng giao thức truyền file.");
                     endpoints.ProtocolVersion = protocol;
                     endpoints.ChannelCount = request.ChannelCount;
-                    endpoints.Signals = parallelConnections ? [new(), new()] : [new()];
+                    endpoints.Signals = parallelConnections || (highSpeed && request.ChannelCount > 1)
+                        ? Enumerable.Range(0, request.ChannelCount).Select(_ => new ConnectionSignals()).ToArray()
+                        : [new()];
                     endpoints.Receiver = connectionId;
                     endpoints.ReceiverSession = sessionId;
-                    endpoints.Deadline = DateTime.UtcNow.AddSeconds(45);
+                    endpoints.Deadline = DateTime.UtcNow.AddSeconds(60);
                     transfer.AcceptedAt = DateTime.UtcNow;
                     transfer.Status = "accepted";
                     break;
                 case "reject" when receiver && transfer.Status == "offered":
                     transfer.Status = "rejected";
                     break;
-                case "begin" when sender && transfer.Status == "accepted" && endpoints.Signals.All(signals => signals.Answered):
+                case "begin" when sender && transfer.Status == "accepted" &&
+                    (endpoints.Signals.All(signals => signals.Answered) ||
+                     (endpoints.ProtocolVersion == HighSpeedProtocol && endpoints.Signals.Length > 0 && endpoints.Signals[0].Answered)):
                     transfer.Status = "transferring";
                     endpoints.Deadline = DateTime.UtcNow.AddMinutes(30);
                     break;
                 case "hash" when sender && transfer.Status == "transferring" &&
-                    endpoints.ProtocolVersion is DeferredHashProtocol or MultichannelProtocol or ParallelConnectionsProtocol:
+                    IsDeferredCapableProtocol(endpoints.ProtocolVersion):
                     var digest = ParseHash(sourceHash);
                     if (transfer.Sha256 is not null)
                     {
@@ -284,6 +309,7 @@ public sealed partial class FileTransferService(IServiceScopeFactory scopes,
         var id = ParseId(signal.TransferId);
         if (signal.Payload is null || signal.Payload.Length > (signal.Kind == "ice" ? 4096 : 24000))
             throw new HubException("Báo hiệu quá lớn.");
+        string targetConnection;
         await gate.WaitAsync();
         try
         {
@@ -296,14 +322,18 @@ public sealed partial class FileTransferService(IServiceScopeFactory scopes,
             if (signal.ConnectionIndex < 0 || signal.ConnectionIndex >= endpoints.Signals.Length)
                 throw new HubException("Chỉ số kết nối báo hiệu không hợp lệ.");
             var signals = endpoints.Signals[signal.ConnectionIndex];
+            targetConnection = sender ? endpoints.Receiver : endpoints.Sender;
             if (!presence.GetValidConnectionIds([endpoints.SenderId, endpoints.ReceiverId])
-                    .Contains(sender ? endpoints.Receiver : endpoints.Sender))
+                    .Contains(targetConnection))
                 throw new HubException("Tab bên kia đã ngắt kết nối.");
-            using var scope = scopes.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            if (await db.Users.AnyAsync(item =>
-                    (item.Id == endpoints.SenderId || item.Id == endpoints.ReceiverId) && item.IsDisabled))
-                throw new HubException("Tài khoản không khả dụng.");
+            if (signal.Kind != "ice")
+            {
+                using var scope = scopes.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                if (await db.Users.AnyAsync(item =>
+                        (item.Id == endpoints.SenderId || item.Id == endpoints.ReceiverId) && item.IsDisabled))
+                    throw new HubException("Tài khoản không khả dụng.");
+            }
             if (signal.Kind == "offer" && sender && !signals.Offered)
                 signals.Offered = true;
             else if (signal.Kind == "answer" && receiver && signals.Offered && !signals.Answered)
@@ -321,10 +351,10 @@ public sealed partial class FileTransferService(IServiceScopeFactory scopes,
                 catch (JsonException) { throw new HubException("ICE candidate không hợp lệ."); }
             }
             else throw new HubException("Thứ tự báo hiệu không hợp lệ.");
-            await hub.Clients.Client(sender ? endpoints.Receiver : endpoints.Sender).FileSignal(signal);
-            if (signal.Kind != "ice") monitoring.File(signal.TransferId, "backend", signal.Kind);
         }
         finally { gate.Release(); }
+        await hub.Clients.Client(targetConnection).FileSignal(signal);
+        if (signal.Kind != "ice") monitoring.File(signal.TransferId, "backend", signal.Kind);
     }
 
     public async Task SweepAsync(string? disconnectedConnection = null)
@@ -430,7 +460,8 @@ public sealed partial class FileTransferService(IServiceScopeFactory scopes,
         endpoints?.SupportedProtocols ?? ["file-v1"],
         endpoints?.ProtocolVersion, endpoints?.ChannelCount ?? 1, endpoints?.RequestedChannelCount ?? 1,
         endpoints?.Relay is null ? null : "https", endpoints?.Relay?.ReceiverReady ?? false,
-        endpoints?.Relay?.ForwardedBytes ?? 0, endpoints?.Relay?.ConnectionCount ?? 1);
+        endpoints?.Relay?.ForwardedBytes ?? 0, endpoints?.Relay?.ConnectionCount ?? 1,
+        endpoints?.Relay?.Mode, endpoints?.Relay?.PartBytes);
 
     private static long ParseId(string value) =>
         long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0

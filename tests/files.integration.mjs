@@ -112,6 +112,10 @@ try {
   assert.equal(settings.data.legacyMaximumFileBytes, 100 * 1024 ** 2)
   assert.equal(settings.data.maximumFileChannels, 8)
   assert.equal(settings.data.supportsParallelFileConnections, true)
+  assert.equal(settings.data.supportsWebRtcV7, true)
+  assert.equal(settings.data.maximumParallelFileConnections, 4)
+  assert.equal(settings.data.v7MaxChunkBytes, 65536)
+  assert.equal(settings.data.v7BlockBytes, 1048576)
   const parallelOffer = overrides => offer({ supportedProtocols: ['file-v5', 'file-v1', 'file-v2'], requestedChannelCount: 8, ...overrides })
   await assert.rejects(sender.invoke('OfferFile', parallelOffer({ requestedChannelCount: 9 })))
   await assert.rejects(sender.invoke('OfferFile', parallelOffer({ supportedProtocols: ['file-v2'] })))
@@ -158,6 +162,30 @@ try {
   assert.deepEqual(forwarded.map(signal => [signal.kind, signal.connectionIndex]), [['ice', 1], ['offer', 1]])
   const transferringSeparate = await sender.invoke('BeginFileTransfer', action(acceptedSeparate))
   await sender.invoke('CancelFile', action(transferringSeparate))
+
+  await assert.rejects(sender.invoke('OfferFile', offer({
+    fileSizeBytes: 100 * 1024 ** 2 + 123, sha256Hex: null,
+    supportedProtocols: ['file-v7', 'file-v4'], requestedChannelCount: 3,
+  })))
+  const v7Offer = await sender.invoke('OfferFile', offer({
+    fileSizeBytes: 100 * 1024 ** 2 + 123, sha256Hex: null,
+    supportedProtocols: ['file-v7', 'file-v6', 'file-v5', 'file-v4'], requestedChannelCount: 2,
+  }))
+  const acceptedV7 = await receiver.invoke('AcceptFile', {
+    ...action(v7Offer), protocolVersion: 'file-v7', channelCount: 2,
+  })
+  assert.equal(acceptedV7.protocolVersion, 'file-v7')
+  assert.equal(acceptedV7.channelCount, 2)
+  for (const idx of [0, 1]) {
+    await sender.invoke('SendFileSignal', { transferId: v7Offer.id, connectionIndex: idx, kind: 'offer', payload: 'v=0\r\n' })
+    await receiver.invoke('SendFileSignal', { transferId: v7Offer.id, connectionIndex: idx, kind: 'answer', payload: 'v=0\r\n' })
+  }
+  const transferringV7 = await sender.invoke('BeginFileTransfer', action(acceptedV7))
+  const hashedV7 = await sender.invoke('FinalizeFileHash', { ...action(transferringV7), sha256Hex: hash })
+  const completedV7 = await receiver.invoke('CompleteFile', {
+    ...action(hashedV7), receivedBytes: 100 * 1024 ** 2 + 123, verifiedSha256Hex: hash,
+  })
+  assert.equal(completedV7.status, 'completed')
   const separateFallback = await sender.invoke('OfferFile', separateOffer())
   const acceptedFallback = await receiver.invoke('AcceptFile', {
     ...action(separateFallback), protocolVersion: 'file-v5', channelCount: 2,

@@ -22,6 +22,7 @@ function instrument() {
   window.__flowReady = []
   window.__flowChannels = []
   window.__flowActiveChannels = []
+  window.__iceServerHistory = []
   window.showSaveFilePicker = async options =>
     (await navigator.storage.getDirectory()).getFileHandle(options.suggestedName, { create: true })
   const send = RTCDataChannel.prototype.send
@@ -49,6 +50,7 @@ function instrument() {
   window.RTCPeerConnection = class extends Peer {
     constructor(...args) {
       if (window.__breakPeer) throw new DOMException('Simulated WebRTC failure', 'NotSupportedError')
+      window.__iceServerHistory.push(args[0]?.iceServers || [])
       super(...args)
     }
   }
@@ -157,6 +159,7 @@ try {
   await settings(a, 1, false, false)
   await writeFile(automaticSource, bytes)
   const beforeAutomatic = await a.evaluate(() => window.__flowChannels.length)
+  const autoStart = performance.now()
   await a.locator('.composer input[type=file]').setInputFiles(automaticSource)
   await card(b, 'flow-auto-110mb.bin').getByRole('button', { name: 'Nhận file', exact: true }).click()
   const autoChat = 'Chat trong lúc truyền tự động ' + run.names[0]
@@ -164,14 +167,16 @@ try {
   await a.locator('textarea').press('Enter')
   await b.getByRole('log').getByText(autoChat, { exact: true }).waitFor()
   await complete(a, b, 'flow-auto-110mb.bin', bytes)
+  const autoSeconds = (performance.now() - autoStart) / 1000
   assert.deepEqual(await a.evaluate(start => window.__flowChannels.slice(start), beforeAutomatic),
-    ['file-v6-0', 'file-v6-1'])
-  console.log('PASS normal mode automatically uses two connections for 110 MB, exact SHA-256 and concurrent chat')
+    ['file-v7-0', 'file-v7-1'])
+  console.log(`PASS normal mode automatically uses two v7 connections for 110 MB (${autoSeconds.toFixed(2)}s, ${(110 / autoSeconds).toFixed(2)} MB/s), exact SHA-256 and concurrent chat`)
 
   const oldConfiguration = async route => {
     const response = await route.fetch()
     const settings = await response.json()
     delete settings.supportsParallelFileConnections
+    delete settings.supportsWebRtcV7
     await route.fulfill({ response, json: settings })
   }
   await a.route('**/api/v1/files/configuration', oldConfiguration)
@@ -194,7 +199,7 @@ try {
     await card(b, name).getByRole('button', { name: 'Nhận file', exact: true }).click()
     await complete(a, b, name, sample)
     assert.equal((await a.evaluate(previous => window.__flowChannels.slice(previous), previousChannels))
-      .filter(label => label.startsWith(parallel ? 'file-v6-' : 'file-v5-')).length, count)
+      .filter(label => label.startsWith(parallel ? 'file-v7-' : 'file-v5-')).length, count)
     console.log(`PASS negotiated window with ${parallel ? 'two independent connections' : 'eight channels'}, exact file and SHA-256`)
   }
 
@@ -226,6 +231,46 @@ try {
   assert.equal(await card(b, 'flow-https-fallback.bin').getAttribute('data-transport'), 'https')
   assert.equal(await card(a, 'flow-https-fallback.bin').locator('.file-rtc-info').count(), 0)
   console.log('PASS WebRTC failure switches to HTTPS without stale WebRTC statistics, exact SHA-256')
+
+  await b.evaluate(() => { window.__breakPeer = false })
+  const turnConfiguration = async route => {
+    const response = await route.fetch()
+    const settings = await response.json()
+    settings.iceServers = [
+      { urls: ['stun:stun.example.test:3478', 'turn:turn.example.test:3478?transport=udp'], username: 'u', credential: 'p' },
+    ]
+    await route.fulfill({ response, json: settings })
+  }
+  await a.route('**/api/v1/files/configuration', turnConfiguration)
+  await reloadSender(a)
+  const smallTurnSample = bytes.subarray(0, 16_384)
+  await a.locator('.composer input[type=file]').setInputFiles({ name: 'turn-off.bin', mimeType: 'application/octet-stream', buffer: smallTurnSample })
+  await card(b, 'turn-off.bin').getByRole('button', { name: 'Nhận file', exact: true }).click()
+  await card(a, 'turn-off.bin').locator(':scope[data-status="transferring"], :scope[data-status="completed"]').first().waitFor()
+  await card(a, 'turn-off.bin').getByRole('button', { name: 'Hủy', exact: true }).click().catch(() => {})
+  await waitFor(() => a.evaluate(() => window.__iceServerHistory.at(-1)), Boolean)
+  const iceOff = await a.evaluate(() => window.__iceServerHistory.at(-1))
+  assert.equal(JSON.stringify(iceOff).includes('turn:'), false)
+  assert.equal(JSON.stringify(iceOff).includes('stun:stun.example.test:3478'), true)
+
+  await a.goto(origin + '/#settings', { waitUntil: 'networkidle' })
+  await a.getByRole('button', { name: /^Nhà phát triển/ }).click()
+  const turnSwitch = a.getByRole('switch', { name: 'Cho phép chuyển tiếp qua TURN cho truyền file' })
+  assert.equal(await turnSwitch.getAttribute('aria-checked'), 'false')
+  await turnSwitch.click()
+  assert.equal(await turnSwitch.getAttribute('aria-checked'), 'true')
+  await a.goto(origin + '/#chat', { waitUntil: 'networkidle' })
+  await openConversation(a, 1)
+
+  const beforeOnCount = await a.evaluate(() => window.__iceServerHistory.length)
+  await a.locator('.composer input[type=file]').setInputFiles({ name: 'turn-on.bin', mimeType: 'application/octet-stream', buffer: smallTurnSample })
+  await card(b, 'turn-on.bin').getByRole('button', { name: 'Nhận file', exact: true }).click()
+  await waitFor(() => a.evaluate(prev => window.__iceServerHistory.length > prev, beforeOnCount), Boolean)
+  const iceOn = await a.evaluate(() => window.__iceServerHistory.at(-1))
+  assert.equal(JSON.stringify(iceOn).includes('turn:turn.example.test:3478'), true)
+  await card(a, 'turn-on.bin').getByRole('button', { name: 'Hủy', exact: true }).click().catch(() => {})
+  await a.unroute('**/api/v1/files/configuration', turnConfiguration)
+  console.log('PASS Developer TURN toggle filters turn: ICE servers when OFF and retains them when ON')
   assert.deepEqual(errors, [])
 } catch (error) {
   console.log('FLOW_TEST_FAILURE', error.message)

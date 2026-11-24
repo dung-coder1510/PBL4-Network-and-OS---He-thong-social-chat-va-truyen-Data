@@ -1,5 +1,6 @@
 import { requestFileContent } from './apiClient.js'
 import { createFileStorage } from './fileStorage.js'
+import { streamResponseToDisk } from './fileRelayStream.js'
 
 export const RELAY_SAMPLE_BYTES = 110_000_000
 
@@ -25,16 +26,7 @@ export async function measureRelayPath(token, target, signal, onStage) {
     onStage('Đang đo tải xuống và ghi tệp thử…')
     const downloadStart = performance.now()
     const download = await requestFileContent(content, { token, signal })
-    const reader = download.body.getReader()
-    let received = 0
-    try {
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        await disk.write(received, value)
-        received += value.byteLength
-      }
-    } finally { reader.releaseLock() }
+    await streamResponseToDisk(download, disk, signal)
     disk.verify(download.headers.get('X-File-SHA256'))
     await disk.commit()
     const downloadSeconds = (performance.now() - downloadStart) / 1000

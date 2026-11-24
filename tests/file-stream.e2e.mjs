@@ -51,9 +51,9 @@ function instrument() {
   }
   const send = RTCDataChannel.prototype.send
   RTCDataChannel.prototype.send = function (data) {
-    if (window.__corrupt && this.label === 'file-v2-0' && data instanceof ArrayBuffer) {
+    if (window.__corrupt && (this.label === 'file-v2-0' || this.label === 'file-v5-0' || this.label === 'file-v7-0') && data instanceof ArrayBuffer) {
       const copy = data.slice(0)
-      new Uint8Array(copy)[4] ^= 1
+      new Uint8Array(copy)[this.label === 'file-v2-0' ? 4 : 8] ^= 1
       return send.call(this, copy)
     }
     return send.call(this, data)
@@ -166,7 +166,7 @@ try {
     types: [{ description: 'Tệp .bin', accept: { 'application/octet-stream': ['.bin'] } }],
     excludeAcceptAllOption: true,
   })
-  assert.deepEqual(await a.evaluate(() => window.__channels), Array(4).fill('file-v2-0'))
+  assert.deepEqual(await a.evaluate(() => window.__channels), Array(4).fill('file-v7-0'))
 
   await openDeveloperSettings(a)
   const developerSwitch = a.getByRole('switch', { name: 'Kích hoạt chế độ nhà phát triển' })
@@ -243,7 +243,7 @@ try {
   assert.deepEqual(await a.evaluate(start => ({
     labels: window.__channels.slice(start),
     connections: new Set(window.__fileConnections.slice(start)).size,
-  }), previousChannels), { labels: ['file-v6-0', 'file-v6-1'], connections: 2 })
+  }), previousChannels), { labels: ['file-v7-0', 'file-v7-1'], connections: 2 })
   await card(a, separateName).getByText(/^2 kết nối riêng/).waitFor()
   assert.deepEqual(await savedHash(b, separateName), { size: sizeAboveLegacyLimit, hash: largeHash })
   console.log('PASS two separate WebRTC connections save a file over 100 MiB with matching SHA-256')
@@ -365,7 +365,7 @@ try {
     window.__failAfterWrite = true
     window.__destinationWrites = 0
   })
-  await offer(a, b, 'save-error.bin', randomBytes(40 * 1024))
+  await offer(a, b, 'save-error.bin', randomBytes(300 * 1024))
   await card(b, 'save-error.bin').getByRole('button', { name: 'Nhận file', exact: true }).click()
   await card(b, 'save-error.bin').locator(':scope[data-status="failed"]').waitFor()
   await expectClean(b)
@@ -373,7 +373,7 @@ try {
   await b.evaluate(() => { window.__failAfterWrite = false; window.__holdAfterWrite = true; window.__destinationWrites = 0 })
   console.log('PASS failure after partial destination write preserves existing file')
 
-  await offer(a, b, 'cancel-save.bin', randomBytes(40 * 1024))
+  await offer(a, b, 'cancel-save.bin', randomBytes(300 * 1024))
   await card(b, 'cancel-save.bin').getByRole('button', { name: 'Nhận file', exact: true }).click()
   await waitFor(() => b.evaluate(() => window.__destinationWrites), count => count > 0)
   await card(b, 'cancel-save.bin').getByRole('button', { name: 'Hủy', exact: true }).click()

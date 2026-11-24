@@ -21,11 +21,18 @@ function readDeveloperSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(DEVELOPER_SETTINGS_KEY))
     const count = saved?.fileChannelCount
+    const keepSavedRelay = RELAY_CONNECTION_COUNTS.includes(saved?.relayConnectionCount) &&
+      (!Object.hasOwn(saved ?? {}, 'allowTurnForFiles') || saved?.relayConfigured === true)
     return { enabled: saved?.enabled === true,
       fileChannelCount: Number.isInteger(count) && count >= 1 && count <= MAX_FILE_CHANNELS ? count : 1,
       parallelFileConnections: saved?.parallelFileConnections === true,
-      relayConnectionCount: RELAY_CONNECTION_COUNTS.includes(saved?.relayConnectionCount) ? saved.relayConnectionCount : 1 }
-  } catch { return { enabled: false, fileChannelCount: 1, parallelFileConnections: false, relayConnectionCount: 1 } }
+      allowTurnForFiles: saved?.allowTurnForFiles === true,
+      relayConfigured: saved?.relayConfigured === true,
+      relayConnectionCount: keepSavedRelay ? saved.relayConnectionCount : 4 }
+  } catch {
+    return { enabled: false, fileChannelCount: 1, parallelFileConnections: false,
+      allowTurnForFiles: false, relayConfigured: false, relayConnectionCount: 4 }
+  }
 }
 
 function App() {
@@ -155,8 +162,9 @@ function App() {
       <FileTransferProvider token={session.accessToken} user={session.user} developerMode={developerSettings.enabled}
         onRelayActivity={relayActivity}
         preferredChannelCount={developerSettings.enabled ? developerSettings.fileChannelCount : null}
-        relayConnectionCount={developerSettings.enabled ? developerSettings.relayConnectionCount : 1}
-        parallelFileConnections={developerSettings.enabled ? developerSettings.parallelFileConnections : null}>
+        relayConnectionCount={developerSettings.enabled ? developerSettings.relayConnectionCount : null}
+        parallelFileConnections={developerSettings.enabled ? developerSettings.parallelFileConnections : null}
+        allowTurnForFiles={developerSettings.enabled ? developerSettings.allowTurnForFiles : false}>
       <AppShell currentPage={visiblePage} onLogout={logout} onNavigate={navigate} user={session.user} loggingOut={loggingOut}>
         {logoutError && <p className="auth-workspace-error" role="alert">{logoutError}</p>}
         {visiblePage === 'settings'

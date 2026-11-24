@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../PBL4/Services/FileRelayPipe.cs" Link="FileRelayPipe.cs" />
+    <Compile Include="../../PBL4/Services/FileRelayPartStore.cs" Link="FileRelayPartStore.cs" />
   </ItemGroup>
 </Project>

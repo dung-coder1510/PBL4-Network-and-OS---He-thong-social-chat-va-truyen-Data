@@ -3,7 +3,7 @@ import Icon from '../Icon.jsx'
 import { useFileTransfers } from '../../realtime/fileTransferContext.js'
 import { isFileActive } from '../../services/fileTransfers.js'
 import { canSaveFile } from '../../services/fileStorage.js'
-import { LEGACY_MAX_FILE_BYTES, PARALLEL_CONNECTIONS_PROTOCOL } from '../../services/fileProtocol.js'
+import { HIGH_SPEED_PROTOCOL, LEGACY_MAX_FILE_BYTES, PARALLEL_CONNECTIONS_PROTOCOL } from '../../services/fileProtocol.js'
 import { localFileStatus } from '../../services/fileTransferState.js'
 import { fileTypeLabel, formatFileSize } from '../../utils/chatTimeline.js'
 import FileRtcDiagnostics from '../files/FileRtcDiagnostics.jsx'
@@ -61,12 +61,17 @@ export default function FileMessageCard({ transfer, currentUserId }) {
         {transfer.bytesPerSecond > 0 ? ` · ${formatFileSize(transfer.bytesPerSecond)}/s` : ''}</span>
     </div>}
     {!relay && files.developerMode && transfer.acceptedAt && transfer.channelCount > 0 && <p className="file-message-hint">
-      {transfer.protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL ? '2 kết nối riêng' : `${transfer.channelCount} kênh`}
+      {transfer.protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL ||
+        (transfer.protocolVersion === HIGH_SPEED_PROTOCOL && transfer.channelCount > 1)
+        ? `${transfer.channelCount} kết nối riêng` : `${transfer.channelCount} kênh`}
+      {transfer.protocolVersion === HIGH_SPEED_PROTOCOL ? ' · v7' : ''}
       {!active && (transfer.averageBytesPerSecond || transfer.bytesPerSecond) > 0
         ? ` · ${formatFileSize(transfer.averageBytesPerSecond || transfer.bytesPerSecond)}/s` : ''}
     </p>}
     {relay && files.developerMode && transfer.relayConnectionCount > 1 &&
-      <p className="file-message-hint">{transfer.relayConnectionCount} kết nối tải lên HTTPS</p>}
+      <p className="file-message-hint">{transfer.relayMode === 'multipart'
+        ? `${transfer.relayConnectionCount} kết nối HTTPS (tải lên & xuống)`
+        : `${transfer.relayConnectionCount} kết nối tải lên HTTPS`}</p>}
     {!relay && <FileRtcDiagnostics stats={transfer.rtcDiagnostics} developerMode={files.developerMode} />}
     {active && !canRespond && !ownEndpoint && <p className="file-message-hint">Đang xử lý ở tab khác.</p>}
     {transfer.savedLocally && <p className="file-message-hint">Đã lưu thành {transfer.savedName}.</p>}
