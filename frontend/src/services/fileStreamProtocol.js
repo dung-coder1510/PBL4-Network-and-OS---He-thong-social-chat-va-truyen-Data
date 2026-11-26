@@ -424,6 +424,7 @@ export function createStreamReceiver({ size, signal, write, writePart, acknowled
   if (highSpeed && (!Number.isSafeInteger(maxChunkBytes) || maxChunkBytes < CHUNK_BYTES || maxChunkBytes > V7_MAX_CHUNK_BYTES))
     throw new Error('Kích thước khung nhận không hợp lệ.')
   let effectiveChunkBytes = maxChunkBytes
+  const connectionChunkBytes = new Array(channelCount).fill(maxChunkBytes)
   const windowBytes = batched ? maxWindowBytes : ACK_WINDOW
   const ackBytes = batched ? DIRECT_WRITE_BYTES : ACK_INTERVAL
   const nextOffsets = Array.from({ length: channelCount }, (_, index) => index * CHUNK_BYTES)
@@ -541,10 +542,12 @@ export function createStreamReceiver({ size, signal, write, writePart, acknowled
       if (highSpeed) return { maxWindowBytes: windowBytes, maxChunkBytes: effectiveChunkBytes }
       return batched ? { maxWindowBytes: windowBytes } : {}
     },
-    negotiateConnection(sctpMaxMessageSize) {
+    negotiateConnection(sctpMaxMessageSize, index = 0) {
       if (highSpeed && Number.isFinite(sctpMaxMessageSize)) {
         const clamped = Math.min(maxChunkBytes, Math.floor((sctpMaxMessageSize - header) / 1024) * 1024)
         if (clamped < CHUNK_BYTES) throw new Error('WebRTC không hỗ trợ kích thước khung truyền.')
+        if (Number.isInteger(index) && index >= 0 && index < channelCount)
+          connectionChunkBytes[index] = clamped
         effectiveChunkBytes = Math.min(effectiveChunkBytes, clamped)
       }
       return this.capabilities
@@ -560,7 +563,8 @@ export function createStreamReceiver({ size, signal, write, writePart, acknowled
     push(frame, index = 0) {
       signal.throwIfAborted()
       if (highSpeed) {
-        const { offset, payload } = readStreamChunk(frame, protocolVersion, effectiveChunkBytes)
+        const allowedChunkBytes = Math.max(effectiveChunkBytes, connectionChunkBytes[index] ?? maxChunkBytes)
+        const { offset, payload } = readStreamChunk(frame, protocolVersion, allowedChunkBytes)
         if (ended || endedChannels.has(index) || index < 0 || index >= channelCount ||
             received + payload.byteLength - acknowledged > windowBytes)
           throw new Error('Chunk sai kênh, vị trí, kích thước hoặc vượt cửa sổ ACK.')

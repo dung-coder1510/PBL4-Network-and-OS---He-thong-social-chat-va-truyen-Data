@@ -14,7 +14,7 @@ function Statusbar() {
         <span className="status-item muted">Tệp P2P: {transmitting ? `${transmitting} phiên đang truyền` : 'Không có phiên đang truyền'}</span>
       </div>
       <div className="statusbar-right">
-        <span className="status-item muted">PBL4 · Web Client</span>
+        <span className="status-item muted">PBL4 - Web Client</span>
       </div>
     </footer>
   )

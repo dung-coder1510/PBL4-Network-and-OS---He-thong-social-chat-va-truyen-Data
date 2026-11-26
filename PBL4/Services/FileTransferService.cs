@@ -39,6 +39,7 @@ public sealed partial class FileTransferService(IServiceScopeFactory scopes,
         public string? SenderSession { get; init; }
         public string? ReceiverSession { get; set; }
         public RelaySession? Relay { get; set; }
+        public bool AllowTurn { get; set; }
         public string[] SupportedProtocols { get; init; } = ["file-v1"];
         public string ProtocolVersion { get; set; } = "file-v1";
         public int RequestedChannelCount { get; init; } = 1;
@@ -154,6 +155,7 @@ public sealed partial class FileTransferService(IServiceScopeFactory scopes,
                 SupportedProtocols = protocols,
                 RequestedChannelCount = request.RequestedChannelCount,
                 SenderSession = sessionId,
+                AllowTurn = request.AllowTurn,
                 Relay = relay ? new RelaySession(sessionId!, multipartRelay, multipartRelay ? request.RelayConnectionCount : 1) : null
             };
             if (endpoints.Relay is not null && hash is not null)
@@ -218,6 +220,7 @@ public sealed partial class FileTransferService(IServiceScopeFactory scopes,
                         : [new()];
                     endpoints.Receiver = connectionId;
                     endpoints.ReceiverSession = sessionId;
+                    endpoints.AllowTurn = endpoints.AllowTurn || request.AllowTurn;
                     endpoints.Deadline = DateTime.UtcNow.AddSeconds(60);
                     transfer.AcceptedAt = DateTime.UtcNow;
                     transfer.Status = "accepted";
@@ -290,11 +293,19 @@ public sealed partial class FileTransferService(IServiceScopeFactory scopes,
             var receiver = pair.ReceiverId == userId && pair.Receiver == connectionId;
             if (!sender && !receiver) throw new HubException("Báo cáo thuộc tab khác.");
             var now = DateTime.UtcNow;
+            var previousBytes = sender ? pair.SenderBytes : pair.ReceiverBytes;
             if (pair.Deadline <= now || report.Bytes > pair.Size ||
-                report.Bytes < (sender ? pair.SenderBytes : pair.ReceiverBytes)) return;
+                report.Bytes < previousBytes) return;
             static int Rank(string? stage) => stage switch { "channel-open" => 1, "transferring" => 2, "verifying" => 3, "failed" => 4, _ => 0 };
             var previousStage = sender ? pair.SenderStage : pair.ReceiverStage;
             if (Rank(report.Stage) < Rank(previousStage) || sender && report.Stage == "verifying") return;
+            // Gia hạn trượt khi vẫn đang có tiến độ thật để tệp 4–10 GiB qua mạng chậm không bị ngắt ở phút thứ 30.
+            if ((report.Bytes.HasValue && report.Bytes.Value > previousBytes) ||
+                (report.Stage == "verifying" && previousStage != "verifying"))
+            {
+                var extended = now.AddMinutes(30);
+                if (extended > pair.Deadline) pair.Deadline = extended;
+            }
             // Đổi giai đoạn được báo ngay; mẫu tiến độ cùng giai đoạn tối đa mỗi 5 giây.
             if (report.Stage == previousStage && now - (sender ? pair.LastSenderReport : pair.LastReceiverReport) < TimeSpan.FromSeconds(5)) return;
             if (sender) { pair.LastSenderReport = now; pair.SenderStage = report.Stage; pair.SenderBytes = report.Bytes ?? pair.SenderBytes; }
@@ -461,7 +472,7 @@ public sealed partial class FileTransferService(IServiceScopeFactory scopes,
         endpoints?.ProtocolVersion, endpoints?.ChannelCount ?? 1, endpoints?.RequestedChannelCount ?? 1,
         endpoints?.Relay is null ? null : "https", endpoints?.Relay?.ReceiverReady ?? false,
         endpoints?.Relay?.ForwardedBytes ?? 0, endpoints?.Relay?.ConnectionCount ?? 1,
-        endpoints?.Relay?.Mode, endpoints?.Relay?.PartBytes);
+        endpoints?.Relay?.Mode, endpoints?.Relay?.PartBytes, endpoints?.AllowTurn ?? false);
 
     private static long ParseId(string value) =>
         long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0

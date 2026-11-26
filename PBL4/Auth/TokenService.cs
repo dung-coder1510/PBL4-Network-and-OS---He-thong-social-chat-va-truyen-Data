@@ -10,6 +10,9 @@ namespace PBL4.Auth;
 
 public sealed class TokenService
 {
+    public static readonly TimeSpan AccessTokenLifetime = TimeSpan.FromMinutes(30);
+    public static readonly TimeSpan RefreshTokenLifetime = TimeSpan.FromDays(30);
+
     public string Issuer { get; }
     public string Audience { get; }
     public SymmetricSecurityKey SigningKey { get; }
@@ -34,23 +37,33 @@ public sealed class TokenService
         }
     }
 
-    public AuthSessionDto Create(User user, SessionRegistry sessions)
+    public AuthSessionDto CreateAccessToken(User user, string sessionId, DateTimeOffset now, DateTimeOffset expires)
     {
-        var now = DateTimeOffset.UtcNow;
-        var expires = now.AddMinutes(30);
-        var sid = sessions.Create(user.Id, expires);
         var claims = new[]
         {
             new Claim("sub", user.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-            new Claim("sid", sid),
+            new Claim("sid", sessionId),
             new Claim("ver", user.SessionVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)),
             new Claim("role", user.Role),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N"))
         };
         var token = new JwtSecurityToken(Issuer, Audience, claims, now.UtcDateTime, expires.UtcDateTime,
             new SigningCredentials(SigningKey, SecurityAlgorithms.HmacSha256));
-        return new AuthSessionDto(sid, new JwtSecurityTokenHandler().WriteToken(token),
+        return new AuthSessionDto(sessionId, new JwtSecurityTokenHandler().WriteToken(token),
             expires, CurrentUserDto.From(user));
     }
+
+    public (AuthSessionDto Session, string RefreshToken, DateTimeOffset RefreshExpiresAt) CreateWithRefresh(
+        User user, SessionRegistry sessions)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var accessExpires = now.Add(AccessTokenLifetime);
+        var refreshExpires = now.Add(RefreshTokenLifetime);
+        var (sid, refreshToken) = sessions.Create(user.Id, user.SessionVersion, accessExpires, refreshExpires);
+        return (CreateAccessToken(user, sid, now, accessExpires), refreshToken, refreshExpires);
+    }
+
+    public AuthSessionDto Create(User user, SessionRegistry sessions) =>
+        CreateWithRefresh(user, sessions).Session;
 }
 

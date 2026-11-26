@@ -50,7 +50,7 @@ export default function AuditPanel({ token, active, revision, onFailure, target,
           <article><header><div><strong>{log.adminName}</strong><span> đã {actionName(log.action).toLowerCase()} </span>
             <button className="aw-link" type="button" onClick={() => onUser(log.targetUserId)}>@{log.targetUsername}</button></div>
             <time dateTime={log.createdAt}>{time(log.createdAt)}</time></header>
-            <p className="aw-audit-actor">@{log.adminUsername} · Tài khoản đích #{log.targetUserId}</p>
+            <p className="aw-audit-actor">@{log.adminUsername} - Tài khoản đích #{log.targetUserId}</p>
             <div className="aw-state-change"><AccountState user={{ isDisabled: log.oldIsDisabled }} /><span aria-label="chuyển thành">→</span>
               <AccountState user={{ isDisabled: log.newIsDisabled }} /></div>
             <p className="aw-audit-reason">{log.reason}</p>

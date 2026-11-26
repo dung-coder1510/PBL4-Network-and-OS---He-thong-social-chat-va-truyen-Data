@@ -73,7 +73,7 @@ async function reloadSender(page) {
   await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click()
   await openConversation(page, 1)
 }
-async function settings(page, count, parallel = false, enabled = true) {
+async function settings(page, count, parallel = false, enabled = true, webrtcCount = null) {
   await page.goto(origin + '/#settings', { waitUntil: 'networkidle' })
   await page.getByRole('button', { name: /^Nhà phát triển/ }).click()
   const developer = page.getByRole('switch', { name: 'Kích hoạt chế độ nhà phát triển' })
@@ -81,6 +81,8 @@ async function settings(page, count, parallel = false, enabled = true) {
   if (enabled) {
     const multiple = page.getByRole('switch', { name: 'Dùng hai kết nối WebRTC riêng' })
     if ((await multiple.getAttribute('aria-checked') === 'true') !== parallel) await multiple.click()
+    if (parallel && webrtcCount !== null)
+      await page.getByLabel('Số kết nối WebRTC').selectOption(String(webrtcCount))
     if (!parallel) await page.getByLabel('Số kênh truyền file').selectOption(String(count))
   }
   await page.goto(origin + '/#chat', { waitUntil: 'networkidle' })
@@ -190,17 +192,18 @@ try {
   await a.unroute('**/api/v1/files/configuration', oldConfiguration)
   await reloadSender(a)
 
-  for (const [count, parallel] of [[8, false], [2, true]]) {
-    await settings(a, count, parallel)
+  for (const [count, parallel, webrtcCount] of [[8, false, null], [2, true, null], [4, true, 4]]) {
+    await settings(a, count, parallel, true, webrtcCount)
     const previousChannels = await a.evaluate(() => window.__flowChannels.length)
-    const name = parallel ? 'flow-two-connections.bin' : 'flow-eight-channels.bin'
+    const name = !parallel ? 'flow-eight-channels.bin'
+      : count === 4 ? 'flow-four-connections.bin' : 'flow-two-connections.bin'
     const sample = bytes.subarray(0, 8_000_013)
     await a.locator('.composer input[type=file]').setInputFiles({ name, mimeType: 'application/octet-stream', buffer: sample })
     await card(b, name).getByRole('button', { name: 'Nhận file', exact: true }).click()
     await complete(a, b, name, sample)
     assert.equal((await a.evaluate(previous => window.__flowChannels.slice(previous), previousChannels))
       .filter(label => label.startsWith(parallel ? 'file-v7-' : 'file-v5-')).length, count)
-    console.log(`PASS negotiated window with ${parallel ? 'two independent connections' : 'eight channels'}, exact file and SHA-256`)
+    console.log(`PASS negotiated window with ${parallel ? `${count} independent connections` : 'eight channels'}, exact file and SHA-256`)
   }
 
   await settings(a, 1)
@@ -210,7 +213,7 @@ try {
   await card(b, 'flow-old-receiver.bin').getByRole('button', { name: 'Nhận file', exact: true }).click()
   const old = card(a, 'flow-old-receiver.bin').locator('.file-rtc-diagnostics')
   await old.locator('summary').click()
-  await old.getByText('2.1 MB · Cố định', { exact: true }).waitFor()
+  await old.getByText('2.1 MB - Cố định', { exact: true }).waitFor()
   await b.evaluate(() => { window.__holdWrites = false; window.__oldReceiver = false })
   await complete(a, b, 'flow-old-receiver.bin', sample)
   console.log('PASS old READY without capability keeps the original 2.10 MB window and completes correctly')

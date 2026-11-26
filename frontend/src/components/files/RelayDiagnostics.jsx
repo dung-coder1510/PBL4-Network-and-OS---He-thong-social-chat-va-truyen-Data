@@ -35,16 +35,23 @@ export default function RelayDiagnostics({ token }) {
     }
   }
 
-  return <div>
-    <p>Đo riêng tải lên và tải xuống. Chọn nơi lưu tệp thử 110 MB, chạy phép đo khi các phiên gửi file đã kết thúc.</p>
-    <button className="btn" type="button" disabled={busy} onClick={() => void measure()}>
-      Đo đường truyền HTTPS
-    </button>
-    {busy && <button className="btn" type="button" onClick={() => active.current?.abort()}>Dừng đo</button>}
-    <p role="status">{status}</p>
-    {result && <dl>
-      <dt>Máy này → máy chủ</dt><dd>{result.uploadMBps.toFixed(2)} MB/s · {result.uploadSeconds.toFixed(1)} giây</dd>
-      <dt>Máy chủ → máy này và ghi đĩa</dt><dd>{result.downloadMBps.toFixed(2)} MB/s · {result.downloadSeconds.toFixed(1)} giây</dd>
+  return <div className="relay-diagnostics-box">
+    <div className="relay-diagnostics-head">
+      <div>
+        <strong>Đo băng thông đường truyền HTTPS</strong>
+        <p>Đo riêng tải lên và tải xuống. Chọn nơi lưu tệp thử 110 MB, chạy phép đo khi các phiên gửi file đã kết thúc.</p>
+      </div>
+      <div className="relay-diagnostics-actions">
+        <button className="btn" type="button" disabled={busy} onClick={() => void measure()}>
+          Đo đường truyền HTTPS
+        </button>
+        {busy && <button className="btn btn--danger" type="button" onClick={() => active.current?.abort()}>Dừng đo</button>}
+      </div>
+    </div>
+    {status && <p className="relay-diagnostics-status" role="status">{status}</p>}
+    {result && <dl className="relay-diagnostics-grid">
+      <div><dt>Máy này → máy chủ</dt><dd>{result.uploadMBps.toFixed(2)} MB/s - {result.uploadSeconds.toFixed(1)} giây</dd></div>
+      <div><dt>Máy chủ → máy này và ghi đĩa</dt><dd>{result.downloadMBps.toFixed(2)} MB/s - {result.downloadSeconds.toFixed(1)} giây</dd></div>
     </dl>}
   </div>
 }

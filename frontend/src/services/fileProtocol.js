@@ -6,6 +6,7 @@ export const BUFFER_HIGH = 256 * 1024
 export const BUFFER_LOW = 64 * 1024
 export const MAX_FILE_CHANNELS = 8
 export const PARALLEL_CONNECTION_COUNT = 2
+export const V7_CONNECTION_COUNTS = [1, 2, 4]
 export const DEFERRED_HASH_PROTOCOL = 'file-v4'
 export const MULTICHANNEL_PROTOCOL = 'file-v5'
 export const PARALLEL_CONNECTIONS_PROTOCOL = 'file-v6'
@@ -22,18 +23,35 @@ export const STREAM_PROTOCOLS = [
   'file-v2', 'file-v3', DEFERRED_HASH_PROTOCOL, MULTICHANNEL_PROTOCOL, PARALLEL_CONNECTIONS_PROTOCOL, HIGH_SPEED_PROTOCOL,
 ]
 
+// coturn dùng chung cổng 3478 cho STUN. Khi cấu hình chỉ có turn: (UDP), suy ra stun:host:port
+// để vẫn lấy được ứng viên srflx đục lỗ P2P mà không dùng relay hay credential.
+function deriveStunUrlFromTurn(url) {
+  if (typeof url !== 'string') return null
+  const trimmed = url.trim()
+  if (!/^turn:/i.test(trimmed)) return null
+  const [hostPort, query = ''] = trimmed.slice(5).split('?')
+  if (!hostPort || /(^|&)transport=tcp(&|$)/i.test(query)) return null
+  return `stun:${hostPort}`
+}
+
 export function filterIceServers(iceServers, allowTurn = false) {
   if (allowTurn) return Array.isArray(iceServers) ? iceServers : []
   if (!Array.isArray(iceServers)) return []
   const filtered = []
+  const derivedStun = new Set()
   for (const server of iceServers) {
     if (!server) continue
     const raw = server.urls ?? server.url
     const urls = Array.isArray(raw) ? raw : (typeof raw === 'string' ? [raw] : [])
+    for (const url of urls) {
+      const stun = deriveStunUrlFromTurn(url)
+      if (stun) derivedStun.add(stun)
+    }
     const directUrls = urls.filter(url => typeof url === 'string' && !/^turns?:/i.test(url.trim()))
     if (directUrls.length === 0) continue
     filtered.push({ ...server, urls: Array.isArray(raw) ? directUrls : directUrls[0] })
   }
+  if (filtered.length === 0 && derivedStun.size > 0) return [{ urls: [...derivedStun] }]
   return filtered
 }
 
@@ -106,7 +124,7 @@ export function waitForBuffer(channel, signal, nextBytes = 0, highWaterMark = BU
       const lowLimit = Number.isFinite(channel.bufferedAmountLowThreshold) && channel.bufferedAmountLowThreshold > 0
         ? Math.min(highWaterMark - nextBytes, channel.bufferedAmountLowThreshold)
         : highWaterMark - nextBytes
-      if (channel.bufferedAmount <= lowLimit) finish()
+      if (channel.bufferedAmount + nextBytes <= highWaterMark || channel.bufferedAmount <= lowLimit) finish()
     }
     const closed = () => finish(new Error('Kênh truyền đã đóng.'))
     const aborted = () => finish(new DOMException('Đã hủy', 'AbortError'))

@@ -6,6 +6,7 @@ import { canSaveFile } from '../../services/fileStorage.js'
 import { HIGH_SPEED_PROTOCOL, LEGACY_MAX_FILE_BYTES, PARALLEL_CONNECTIONS_PROTOCOL } from '../../services/fileProtocol.js'
 import { localFileStatus } from '../../services/fileTransferState.js'
 import { fileTypeLabel, formatFileSize } from '../../utils/chatTimeline.js'
+import { formatUserError } from '../../utils/errorMessage.js'
 import FileRtcDiagnostics from '../files/FileRtcDiagnostics.jsx'
 
 // Mot the duy nhat cho moi TransferId; dung lai controller P2P cua trang Tep.
@@ -38,7 +39,7 @@ export default function FileMessageCard({ transfer, currentUserId }) {
     setBusy(true)
     setError('')
     try { await files.action(method, transfer.id, extra) }
-    catch (failure) { setError(failure.message || 'Chưa thực hiện được thao tác. Bạn thử lại nhé.') }
+    catch (failure) { setError(formatUserError(failure, 'Chưa thực hiện được thao tác. Bạn thử lại nhé.')) }
     finally { setBusy(false) }
   }
 
@@ -57,16 +58,16 @@ export default function FileMessageCard({ transfer, currentUserId }) {
     </div>
     {active && transfer.transferredBytes !== undefined && <div className="file-message-progress">
       <progress value={progress} max={transfer.fileSizeBytes || 1} aria-label={`Tiến độ ${transfer.fileName}`} />
-      <span>{percent}% · {formatFileSize(progress)} / {formatFileSize(transfer.fileSizeBytes)}
-        {transfer.bytesPerSecond > 0 ? ` · ${formatFileSize(transfer.bytesPerSecond)}/s` : ''}</span>
+      <span>{percent}% - {formatFileSize(progress)} / {formatFileSize(transfer.fileSizeBytes)}
+        {transfer.bytesPerSecond > 0 ? ` - ${formatFileSize(transfer.bytesPerSecond)}/s` : ''}</span>
     </div>}
     {!relay && files.developerMode && transfer.acceptedAt && transfer.channelCount > 0 && <p className="file-message-hint">
       {transfer.protocolVersion === PARALLEL_CONNECTIONS_PROTOCOL ||
         (transfer.protocolVersion === HIGH_SPEED_PROTOCOL && transfer.channelCount > 1)
         ? `${transfer.channelCount} kết nối riêng` : `${transfer.channelCount} kênh`}
-      {transfer.protocolVersion === HIGH_SPEED_PROTOCOL ? ' · v7' : ''}
+      {transfer.protocolVersion === HIGH_SPEED_PROTOCOL ? ' - v7' : ''}
       {!active && (transfer.averageBytesPerSecond || transfer.bytesPerSecond) > 0
-        ? ` · ${formatFileSize(transfer.averageBytesPerSecond || transfer.bytesPerSecond)}/s` : ''}
+        ? ` - ${formatFileSize(transfer.averageBytesPerSecond || transfer.bytesPerSecond)}/s` : ''}
     </p>}
     {relay && files.developerMode && transfer.relayConnectionCount > 1 &&
       <p className="file-message-hint">{transfer.relayMode === 'multipart'
@@ -77,7 +78,7 @@ export default function FileMessageCard({ transfer, currentUserId }) {
     {transfer.savedLocally && <p className="file-message-hint">Đã lưu thành {transfer.savedName}.</p>}
     {transfer.status === 'completed' && !sending && !transfer.downloadUrl && !transfer.savedLocally &&
       <p className="file-message-hint">Kiểm tra thư mục lưu hoặc tệp đã tải xuống. Nếu chưa lưu, cần gửi lại.</p>}
-    {(error || transfer.error) && <p className="file-message-error" role="alert">{error || transfer.error}</p>}
+    {(error || transfer.error) && <p className="file-message-error" role="alert">{formatUserError(error || transfer.error, '')}</p>}
     {hasActions && <div className="file-message-actions">
       {canRespond && <>
         <button type="button" className="file-card-button primary" disabled={disabled}

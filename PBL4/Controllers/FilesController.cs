@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -47,7 +48,10 @@ public sealed class FilesController(FileTransferService files, IConfiguration co
         });
     }
 
-    public sealed record IceServer(string[] Urls, string? Username, string? Credential);
+    public sealed record IceServer(
+        string[] Urls,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Username = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Credential = null);
 
     // Tra lich su the file trong dung chat; nguoi ngoai nhan 404, khong tiet lo metadata.
     [HttpGet("/api/v1/conversations/{conversationId:long}/files")]

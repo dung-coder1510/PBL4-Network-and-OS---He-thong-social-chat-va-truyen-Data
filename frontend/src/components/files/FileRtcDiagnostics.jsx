@@ -1,28 +1,28 @@
 import { formatFileSize } from '../../utils/chatTimeline.js'
 
 const routeLabel = route => route === 'direct' ? 'WebRTC trực tiếp'
-  : route === 'turn' ? 'WebRTC qua TURN' : 'WebRTC · đang xác định đường truyền'
+  : route === 'turn' ? 'WebRTC qua TURN' : 'WebRTC - đang xác định đường truyền'
 const milliseconds = value => `${Math.round(value)} ms`
 
 export default function FileRtcDiagnostics({ stats, developerMode }) {
   if (!stats?.connections?.length) return null
   return <div className="file-rtc-info" aria-live="off">
-    <p className="file-message-hint">{[...new Set(stats.connections.map(item => routeLabel(item.route)))].join(' · ')}</p>
+    <p className="file-message-hint">{[...new Set(stats.connections.map(item => routeLabel(item.route)))].join(' - ')}</p>
     {developerMode && <details className="file-rtc-diagnostics">
       <summary>Thống kê WebRTC</summary>
       <dl>
         {stats.connections.map((connection, index) => <div key={index}>
           <dt>Kết nối {index + 1}</dt>
           <dd>{routeLabel(connection.route)}
-            {connection.protocol ? ` · ICE ${connection.protocol.toUpperCase()}` : ''}
-            {connection.relayProtocol ? ` · đến TURN bằng ${connection.relayProtocol.toUpperCase()}` : ''}
-            {connection.roundTripMs !== null ? ` · RTT ${milliseconds(connection.roundTripMs)}` : ''}
-            {connection.bytesPerSecond !== null ? ` · ${formatFileSize(connection.bytesPerSecond)}/s trên mạng` : ''}
+            {connection.protocol ? ` - ICE ${connection.protocol.toUpperCase()}` : ''}
+            {connection.relayProtocol ? ` - đến TURN bằng ${connection.relayProtocol.toUpperCase()}` : ''}
+            {connection.roundTripMs !== null ? ` - RTT ${milliseconds(connection.roundTripMs)}` : ''}
+            {connection.bytesPerSecond !== null ? ` - ${formatFileSize(connection.bytesPerSecond)}/s trên mạng` : ''}
           </dd>
         </div>)}
         {stats.chunkBytes !== undefined && <div><dt>Kích thước khung</dt><dd>{formatFileSize(stats.chunkBytes)}</dd></div>}
         {stats.windowBytes !== undefined && <div><dt>Cửa sổ chờ ACK</dt>
-          <dd>{formatFileSize(stats.windowBytes)} · {stats.adaptive ? 'Tự điều chỉnh' : 'Cố định'}</dd></div>}
+          <dd>{formatFileSize(stats.windowBytes)} - {stats.adaptive ? 'Tự điều chỉnh' : 'Cố định'}</dd></div>}
         {stats.maximumWindowBytes !== undefined && <div><dt>Giới hạn máy nhận</dt>
           <dd>{formatFileSize(stats.maximumWindowBytes)}</dd></div>}
         {stats.inFlightBytes !== undefined && <div><dt>Chưa được ACK</dt><dd>{formatFileSize(stats.inFlightBytes)}</dd></div>}

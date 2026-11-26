@@ -145,7 +145,7 @@ export default function ContactsPage({ token, onSessionExpired, onOpenConversati
                 </div> : <div className="contact-meta-header">
                   <span className="contact-name">{contact.alias || contact.user.displayName}</span>
                 </div>}
-                <span className="contact-uname">{contact.alias ? `${contact.user.displayName} · ` : ''}@{contact.user.username}</span>
+                <span className="contact-uname">{contact.alias ? `${contact.user.displayName} - ` : ''}@{contact.user.username}</span>
               </div>
             </div>
             <div className="contact-status-col">

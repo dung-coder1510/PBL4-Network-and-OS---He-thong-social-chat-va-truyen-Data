@@ -98,7 +98,7 @@ export default function AccountsPanel({ token, active, revision, onFailure, onCh
           <tbody>{rows.map(user => <tr key={user.id} data-user-id={user.id} className={selected === user.id ? 'is-selected' : ''}>
             <td><div className="aw-identity"><Avatar size="sm" person={{ id: user.id, name: user.displayName, online: user.isOnline }} />
               <div><button className="aw-link aw-person-name" type="button" onClick={event => view(user.id, event.currentTarget)}>{user.displayName}</button>
-                <small>@{user.username} · #{user.id}</small></div></div></td>
+                <small>@{user.username} - #{user.id}</small></div></div></td>
             <td><span className={`aw-role ${user.role === 'Admin' ? 'is-admin' : ''}`}>{user.role}</span></td>
             <td><AccountState user={user} /><small className={`aw-presence ${user.isOnline ? 'online' : ''}`}>{user.isOnline ? 'Online' : 'Offline'}</small></td>
             <td><div className="aw-row-actions"><button className="aw-link" type="button" onClick={event => view(user.id, event.currentTarget)}>Chi tiết</button>

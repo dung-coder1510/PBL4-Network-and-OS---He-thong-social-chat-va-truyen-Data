@@ -114,6 +114,24 @@ try {
 
   assert.equal((await request(app.port, '/openapi/v1.json', { 'X-Forwarded-Proto': 'https' })).status, 401)
   pass('Production does not expose the development OpenAPI endpoint')
+
+  assert.equal((await request(app.port, '/api/v1/sessions/refresh', {
+    'X-Forwarded-Proto': 'https', 'X-PBL4-Refresh': '1',
+  }, 'POST')).status, 401)
+  assert.equal((await request(app.port, '/api/v1/sessions/refresh', {
+    'X-Forwarded-Proto': 'https',
+  }, 'POST')).status, 401)
+  pass('Refresh endpoint rejects missing cookie or missing anti-CSRF header')
+
+  assert.equal((await request(app.port, '/api/v1/sessions/current', {
+    'X-Forwarded-Proto': 'https',
+  }, 'DELETE')).status, 401)
+  const logoutWithHeader = await request(app.port, '/api/v1/sessions/current', {
+    'X-Forwarded-Proto': 'https', 'X-PBL4-Refresh': '1',
+  }, 'DELETE')
+  assert.equal(logoutWithHeader.status, 204)
+  assert.match(String(logoutWithHeader.headers['set-cookie'] || ''), /pbl4_refresh=/)
+  pass('Logout rejects unauthenticated calls without header and clears refresh cookie when X-PBL4-Refresh is present')
 } finally { await app.stop() }
 
 const defaultCors = await startApp()

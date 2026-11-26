@@ -3,7 +3,7 @@ const FILE_CONTENT_BASE = (import.meta.env?.VITE_FILE_RELAY_CONTENT_BASE_URL || 
 
 // Goi REST API co JWT, JSON va timeout 15 giay; tra JSON/undefined cho 204 hoac nem loi co status/code.
 // Ket hop AbortSignal cua caller voi timeout de huy request khi doi trang/logout hoac cho qua lau.
-async function sendJsonRequest(path, { method = 'GET', body, token, signal, headers, timeoutMs = 15000 } = {}) {
+async function sendJsonRequest(path, { method = 'GET', body, token, signal, headers, credentials = 'same-origin', timeoutMs = 15000 } = {}) {
   let response
   const requestSignal = timeoutMs > 0
     ? (signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs))
@@ -17,6 +17,7 @@ async function sendJsonRequest(path, { method = 'GET', body, token, signal, head
         ...headers,
       },
       body: body ? JSON.stringify(body) : undefined,
+      credentials,
       cache: 'no-store',
       signal: requestSignal,
     })

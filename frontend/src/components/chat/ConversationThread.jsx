@@ -1,9 +1,10 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useLayoutEffect, useRef, useState } from 'react'
 import Avatar from '../Avatar.jsx'
 import Icon from '../Icon.jsx'
 import { textRouteLabel } from '../../services/textProtocol.js'
 import FileMessageCard from './FileMessageCard.jsx'
-import { chatTimeline } from '../../utils/chatTimeline.js'
+import { chatTimeline, formatTimeDivider, shouldShowTimeDivider } from '../../utils/chatTimeline.js'
+import { formatUserError } from '../../utils/errorMessage.js'
 import '../../styles/file-messages.css'
 
 // Hien timestamp server theo gio dia phuong cua trinh duyet voi dinh dang gio/phut tieng Viet.
@@ -16,11 +17,17 @@ function formatTime(value) {
 export default function ConversationThread({ conversation, loading, error, messages,
   currentUserId, historyLoading, historyError, hasOlder, connectionState, connectionError,
   peerTyping, onTypingChange, onBack, onRetry, onRetryHistory, onLoadOlder, onSend,
-  onRetryMessage, onReconnect, onCreate, onSendFile, textState, onAddContact,
+  onRetryMessage, onReconnect, onCreate, onSendFile, sendWithEnter = true, textState, onAddContact,
   transfers = [], fileHistoryLoading, fileHistoryError, relayAvailable }) {
   const peer = conversation?.peer
+  const hasPeer = Boolean(peer)
+  const isStranger = conversation?.isContact === false
+  const stageRef = useRef(null)
+  const strangerRef = useRef(null)
+  const composerWrapRef = useRef(null)
   const messageList = useRef(null)
   const draftInput = useRef(null)
+  const scrollStateRef = useRef({ conversationId: null, firstKey: null, lastKey: null, scrollHeight: 0, scrollTop: 0 })
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
@@ -29,11 +36,30 @@ export default function ConversationThread({ conversation, loading, error, messa
   const [sendingFile, setSendingFile] = useState(false)
   const [fileError, setFileError] = useState('')
   const timeline = chatTimeline(messages, transfers)
+  const firstKey = timeline[0]?.key ?? null
+  const lastKey = timeline.at(-1)?.key ?? null
 
-  // Cuon toi cuoi khi doi conversation hoac so tin thay doi, truoc khi trinh duyet ve khung moi.
+  // Cuon xuong cuoi khi doi hoi thoai hoac co tin moi; giu nguyen vi tri khi nap them tin cu hon o dau danh sach.
   useLayoutEffect(() => {
-    if (messageList.current) messageList.current.scrollTop = messageList.current.scrollHeight
-  }, [conversation?.id, timeline.length])
+    const list = messageList.current
+    if (!list) return
+    const previous = scrollStateRef.current
+    const sameConversation = previous.conversationId === (conversation?.id ?? null)
+    const prependedOlder = sameConversation && previous.firstKey && firstKey &&
+      firstKey !== previous.firstKey && lastKey === previous.lastKey
+    if (prependedOlder) {
+      list.scrollTop = previous.scrollTop + (list.scrollHeight - previous.scrollHeight)
+    } else {
+      list.scrollTop = list.scrollHeight
+    }
+    scrollStateRef.current = {
+      conversationId: conversation?.id ?? null,
+      firstKey,
+      lastKey,
+      scrollHeight: list.scrollHeight,
+      scrollTop: list.scrollTop,
+    }
+  }, [conversation?.id, timeline.length, firstKey, lastKey])
 
   // Do lai noi dung de o nhap tu gian khi go, dan chu va thu gon khi xoa hoac gui xong.
   useLayoutEffect(() => {
@@ -58,6 +84,26 @@ export default function ConversationThread({ conversation, loading, error, messa
     return () => observer.disconnect()
   }, [loading, error])
 
+  // Dong bo khoang dem tren/duoi cua danh sach tin nhan theo chieu cao 2 thanh island noi.
+  useLayoutEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return undefined
+    const syncOffsets = () => {
+      const list = messageList.current
+      const nearBottom = list ? (list.scrollHeight - list.scrollTop - list.clientHeight) < 28 : false
+      const stranger = strangerRef.current
+      const composer = composerWrapRef.current
+      stage.style.setProperty('--stranger-offset', stranger ? `${stranger.offsetTop + stranger.offsetHeight - 6}px` : '0px')
+      stage.style.setProperty('--composer-offset', composer ? `${composer.offsetHeight + 8}px` : '116px')
+      if (list && nearBottom) list.scrollTop = list.scrollHeight
+    }
+    syncOffsets()
+    const observer = new ResizeObserver(syncOffsets)
+    if (strangerRef.current) observer.observe(strangerRef.current)
+    if (composerWrapRef.current) observer.observe(composerWrapRef.current)
+    return () => observer.disconnect()
+  }, [loading, error, hasPeer, isStranger])
+
   // Chan submit rong/trung luc dang gui; chi xoa ban nhap sau khi callback gui thanh cong.
   async function submit(event) {
     event.preventDefault()
@@ -70,7 +116,7 @@ export default function ConversationThread({ conversation, loading, error, messa
       setDraft('')
       onTypingChange(false)
     } catch (failure) {
-      setSendError(failure.message || 'Chưa gửi được tin nhắn.')
+      setSendError(formatUserError(failure, 'Chưa gửi được tin nhắn.'))
     } finally {
       setSending(false)
     }
@@ -82,7 +128,7 @@ export default function ConversationThread({ conversation, loading, error, messa
     try {
       await onRetryMessage(message)
     } catch (failure) {
-      setSendError(failure.message || 'Chưa gửi lại được tin nhắn.')
+      setSendError(formatUserError(failure, 'Chưa gửi lại được tin nhắn.'))
     }
   }
 
@@ -98,7 +144,7 @@ export default function ConversationThread({ conversation, loading, error, messa
     try {
       await onSendFile(file, transport)
     } catch (failure) {
-      setFileError(failure.message || 'Chưa gửi được lời mời nhận tệp.')
+      setFileError(formatUserError(failure, 'Chưa gửi được lời mời nhận tệp.'))
     } finally {
       setSendingFile(false)
     }
@@ -115,7 +161,7 @@ export default function ConversationThread({ conversation, loading, error, messa
   return (
     <section className="thread" aria-label={peer ? `Cuộc trò chuyện với ${peer.displayName}` : 'Nội dung trò chuyện'} aria-busy={loading}>
       <header className="thread-header">
-        <button className="icon-btn back-btn" type="button" onClick={onBack} aria-label="Về danh sách cuộc trò chuyện">←</button>
+        <button className="icon-btn back-btn" type="button" onClick={onBack} aria-label="Về danh sách cuộc trò chuyện"><Icon name="back" size="ico-sm" /></button>
         {peer ? <><Avatar person={{ id: peer.id, name: peer.displayName, online: peer.isOnline }} />
           <div className="thread-person">
             <h2 className="thread-name" title={`@${peer.username}`}>{peer.displayName}</h2>
@@ -135,8 +181,9 @@ export default function ConversationThread({ conversation, loading, error, messa
 
       {loading ? <div className="conversation-thread-body"><p role="status">Đang mở cuộc trò chuyện…</p></div>
         : error ? <div className="conversation-thread-body"><div role="alert"><p>{error}</p><button className="btn" type="button" onClick={onRetry}>Thử lại</button></div></div>
-        : peer ? <>
-          {conversation.isContact === false && <aside className="stranger-contact" aria-label="Thêm liên hệ vào danh bạ">
+        : peer ? <div className={`thread-stage${isStranger ? ' has-stranger' : ''}`} ref={stageRef}>
+          {isStranger && <aside className="stranger-contact" ref={strangerRef} aria-label="Thêm liên hệ vào danh bạ"
+            onWheel={event => { if (messageList.current) messageList.current.scrollTop += event.deltaY }}>
             <div className="stranger-contact-row">
               <Icon name="user-plus" />
               <p>Thêm vào danh bạ của bạn</p>
@@ -146,7 +193,12 @@ export default function ConversationThread({ conversation, loading, error, messa
               </button>
             </div>
           </aside>}
-          <div className="messages" ref={messageList} role="log" aria-live="polite" aria-busy={historyLoading || fileHistoryLoading}>
+          <div className="messages" ref={messageList} role="log" aria-live="polite" aria-busy={historyLoading || fileHistoryLoading}
+            onScroll={() => {
+              if (!messageList.current) return
+              scrollStateRef.current.scrollTop = messageList.current.scrollTop
+              scrollStateRef.current.scrollHeight = messageList.current.scrollHeight
+            }}>
             {hasOlder && <button className="btn conversation-older" type="button" onClick={onLoadOlder} disabled={historyLoading || fileHistoryLoading}>Xem tin nhắn cũ hơn</button>}
             {historyLoading && !messages.length && <p className="conversation-feedback" role="status">Đang tải lịch sử…</p>}
             {historyError && <div className="conversation-feedback" role="alert"><p>{historyError}</p><button className="btn" type="button" onClick={onRetryHistory}>Thử lại</button></div>}
@@ -156,36 +208,76 @@ export default function ConversationThread({ conversation, loading, error, messa
               <Avatar person={{ id: peer.id, name: peer.displayName }} size="xl" />
               <h2>{peer.displayName}</h2><p>Chưa có tin nhắn. Bạn gửi lời chào đầu tiên nhé.</p>
             </div>}
-            {timeline.map(entry => {
+            {timeline.map((entry, index) => {
+              const divider = shouldShowTimeDivider(timeline[index - 1], entry) ? (
+                <div className="time-divider" role="separator" aria-label={formatTimeDivider(entry.createdAt)}>
+                  <time dateTime={entry.createdAt}>{formatTimeDivider(entry.createdAt)}</time>
+                </div>
+              ) : null
               if (entry.kind === 'file') {
                 const transfer = entry.value
                 const self = transfer.senderId === currentUserId
-                return <div className={`msg msg--file${self ? ' self' : ''}`} key={entry.key}>
-                  {!self && <Avatar person={{ id: peer.id, name: peer.displayName }} size="sm" />}
-                  <div className="bubble-wrap"><FileMessageCard transfer={transfer} currentUserId={currentUserId} /></div>
-                </div>
+                return <Fragment key={entry.key}>
+                  {divider}
+                  <div className={`msg msg--file${self ? ' self' : ''}`}>
+                    {!self && <Avatar person={{ id: peer.id, name: peer.displayName }} size="sm" />}
+                    <div className="bubble-wrap"><FileMessageCard transfer={transfer} currentUserId={currentUserId} /></div>
+                  </div>
+                </Fragment>
               }
               const message = entry.value
               const self = message.senderId === currentUserId
-              return <div className={`msg${self ? ' self' : ''}`} key={`${message.senderId}:${message.clientMessageId}`}>
-                {!self && <Avatar person={{ id: peer.id, name: peer.displayName }} size="sm" />}
-                <div className="bubble-wrap">
-                  <div className="bubble">{message.content}</div>
-                  <div className="msg-meta">
-                    <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
-                    {message.sendState === 'sending' && <span>Đang gửi…</span>}
-                    {message.sendState === 'failed' && <button className="message-retry" type="button" onClick={() => retryMessage(message)}>Gửi lại</button>}
-                    {self && message.sendState !== 'sending' && message.sendState !== 'failed' &&
-                      <span>{message.readAt ? 'Đã đọc' : message.deliveredAt ? 'Đã nhận' : 'Đã gửi'}</span>}
+              const isGrouped = (other) => other?.kind === 'text' &&
+                other.value.senderId === message.senderId &&
+                Math.abs(Date.parse(other.createdAt) - Date.parse(entry.createdAt)) < 180_000
+              const samePrev = isGrouped(timeline[index - 1])
+              const sameNext = isGrouped(timeline[index + 1])
+              return <Fragment key={`${message.senderId}:${message.clientMessageId}`}>
+                {divider}
+                <div className={`msg${self ? ' self' : ''}${samePrev ? ' msg--cont-prev' : ''}${sameNext ? ' msg--cont-next' : ''}`}>
+                  {!self && (sameNext
+                    ? <span className="msg-avatar-space" aria-hidden="true" />
+                    : <Avatar person={{ id: peer.id, name: peer.displayName }} size="sm" />)}
+                  <div className="bubble-wrap">
+                    <div className="bubble">{message.content}</div>
+                    <div className="msg-meta">
+                      <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
+                      {message.sendState === 'sending' && <span>Đang gửi…</span>}
+                      {message.sendState === 'failed' && <button className="message-retry" type="button" onClick={() => retryMessage(message)}>Gửi lại</button>}
+                      {self && message.sendState !== 'sending' && message.sendState !== 'failed' &&
+                        <span>{message.readAt ? 'Đã đọc' : message.deliveredAt ? 'Đã nhận' : 'Đã gửi'}</span>}
+                    </div>
                   </div>
                 </div>
-              </div>
+              </Fragment>
             })}
           </div>
-          <form className="composer-wrap" onSubmit={submit}>
-            {connectionError && <div className="composer-alert" role="alert">{connectionError} <button type="button" onClick={onReconnect}>Kết nối lại</button></div>}
-            {sendError && <p className="composer-alert" role="alert">{sendError}</p>}
-            {fileError && <p className="composer-alert" role="alert">{fileError}</p>}
+          <form className="composer-wrap" ref={composerWrapRef} onSubmit={submit}>
+            {connectionError && (
+              <div className="composer-alert" role="alert">
+                <Icon name="info" size="ico-sm" />
+                <span className="composer-alert-text">{formatUserError(connectionError)}</span>
+                <button className="composer-alert-action" type="button" onClick={onReconnect}>Kết nối lại</button>
+              </div>
+            )}
+            {sendError && (
+              <div className="composer-alert" role="alert">
+                <Icon name="info" size="ico-sm" />
+                <span className="composer-alert-text">{sendError}</span>
+                <button className="composer-alert-close" type="button" onClick={() => setSendError('')} aria-label="Đóng thông báo lỗi">
+                  <Icon name="close" size="ico-sm" />
+                </button>
+              </div>
+            )}
+            {fileError && (
+              <div className="composer-alert" role="alert">
+                <Icon name="info" size="ico-sm" />
+                <span className="composer-alert-text">{fileError}</span>
+                <button className="composer-alert-close" type="button" onClick={() => setFileError('')} aria-label="Đóng thông báo lỗi">
+                  <Icon name="close" size="ico-sm" />
+                </button>
+              </div>
+            )}
             {sendingFile && <p className="composer-file-notice" role="status">Đang chuẩn bị tệp…</p>}
             <div className="composer">
               <textarea ref={draftInput} rows={1} value={draft} onChange={event => {
@@ -194,7 +286,7 @@ export default function ConversationThread({ conversation, loading, error, messa
               }} maxLength={4000}
                 disabled={peer.isDisabled || connectionState !== 'connected'}
                 onKeyDown={event => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
+                  if (sendWithEnter && event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault()
                     event.currentTarget.form?.requestSubmit()
                   }
@@ -215,13 +307,15 @@ export default function ConversationThread({ conversation, loading, error, messa
                     disabled={sendingFile || peer.isDisabled} onClick={() => chooseFile('https')}>
                     Gửi qua máy chủ
                   </button>}
-                  <span className="composer-count">{draft.length}/4000</span>
+                  {draft.length > 0 && (
+                    <span className={`composer-count${draft.length >= 3600 ? ' warn' : ''}`}>{draft.length}/4000</span>
+                  )}
                 </div>
                 <button className="send-btn" type="submit" disabled={!draft.trim() || sending || peer.isDisabled || connectionState !== 'connected'} aria-label="Gửi tin nhắn"><Icon name="send" /></button>
               </div>
             </div>
           </form>
-        </> : <div className="conversation-thread-body"><div className="conversation-welcome">
+        </div> : <div className="conversation-thread-body"><div className="conversation-welcome">
           <Icon name="chat" size="ico-lg" /><h2>Cùng nhau kết nối</h2>
           <p>Chọn một cuộc trò chuyện hoặc tìm người để bắt đầu.</p>
           <button className="btn btn--primary" type="button" onClick={onCreate}>Cuộc trò chuyện mới</button>

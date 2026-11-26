@@ -10,6 +10,7 @@ import {
 } from '../services/chatConnection.js'
 import { useChatRealtime } from '../realtime/chatRealtimeContext.js'
 import { useFileTransfers } from '../realtime/fileTransferContext.js'
+import { useNotifications } from '../realtime/notificationContext.js'
 import {
   applyMessageStatus, applyPresence, createClientMessageId, mergeChatMessages, sortConversations,
   upsertConversationMessage, upsertConversationFile,
@@ -26,10 +27,11 @@ const mergeMessages = mergeChatMessages
 // Quan ly danh sach conversation, lich su, thao tac gui va read/typing cua trang Chat.
 // Ket noi va nhan tin thuc te nam o provider de doi trang khong lam ngung P2P.
 export default function ChatPage({ token, user, initialConversationId,
-  onInitialConversationHandled, onSessionExpired }) {
+  onInitialConversationHandled, onSessionExpired, sendWithEnter = true }) {
   const { connection, connectionState, connectionError, reconnect, subscribeSync,
     subscribeMessages, ensureTextSession, sendTextMessage, textStates } = useChatRealtime()
   const files = useFileTransfers()
+  const { setActiveChat, syncConversations } = useNotifications()
   const { loadConversation: loadConversationFiles } = files
   const [items, setItems] = useState([])
   const itemsRef = useRef([])
@@ -322,9 +324,20 @@ export default function ChatPage({ token, user, initialConversationId,
     }
   }, [messages, selectedId, showList, connectionState, visibilityRevision, user.id])
 
-  // Mo conversation duoc truyen tu Danh ba hoac man hinh khac, roi bao da xu ly yeu cau.
+  // Dong bo thread dang mo va danh sach unread voi NotificationProvider.
   useEffect(() => {
-    if (initialConversationId && selectedIdRef.current !== initialConversationId) {
+    const isNarrow = window.matchMedia('(max-width: 900px)').matches
+    setActiveChat({ conversationId: selectedId, threadVisible: !isNarrow || !showList })
+    return () => setActiveChat({ conversationId: null, threadVisible: false })
+  }, [selectedId, showList, visibilityRevision, setActiveChat])
+
+  useEffect(() => {
+    if (!query.trim() && !loading) syncConversations(items)
+  }, [items, query, loading, syncConversations])
+
+  // Mo conversation duoc truyen tu Danh ba, Thong bao hoac man hinh khac, roi bao da xu ly yeu cau.
+  useEffect(() => {
+    if (initialConversationId) {
       select(initialConversationId)
       onInitialConversationHandled?.()
     }
@@ -522,7 +535,7 @@ export default function ChatPage({ token, user, initialConversationId,
           setShowList(true)
         }}
         onRetry={retryDetail} onRetryHistory={retryHistory} onLoadOlder={loadOlderMessages}
-        onSend={submitMessage} relayAvailable={files.relayAvailable}
+        onSend={submitMessage} sendWithEnter={sendWithEnter} relayAvailable={files.relayAvailable}
         onSendFile={(file, transport) => files.offer(conversation.id, file, transport)} onRetryMessage={message =>
           submitMessage(message.content, message.clientMessageId)}
         onReconnect={reconnect} onCreate={() => setShowCreate(true)}

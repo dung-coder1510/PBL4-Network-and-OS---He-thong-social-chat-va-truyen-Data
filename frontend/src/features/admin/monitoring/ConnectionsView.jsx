@@ -16,7 +16,7 @@ export default function ConnectionsView({ data, loading, page, age, onPrevious, 
         const links = connections.filter(link => link.userId === String(user.id))
         return <tr key={user.id}><td><div className="aw-identity"><Avatar size="sm" person={{ id: user.id, name: user.displayName }} />
           <div><button className="aw-link aw-person-name" type="button" onClick={() => onUser?.(user.id)}>{user.displayName}</button>
-            <small>@{user.username} · #{user.id}</small>{user.isDisabled && <small className="aw-error">Bị khóa</small>}</div></div></td>
+            <small>@{user.username} - #{user.id}</small>{user.isDisabled && <small className="aw-error">Bị khóa</small>}</div></div></td>
           <td><span className={`aw-role ${user.role === 'Admin' ? 'is-admin' : ''}`}>{user.role}</span></td>
           <td>{links.length ? <details className="aw-connection-list"><summary><span className="aw-presence online">{links.length} kết nối</span><span className="aw-caption">Xem chi tiết</span></summary>
             <ul>{links.map(link => <li key={link.id}><code title={link.id}>{link.id.slice(0, 12)}…</code><dl>

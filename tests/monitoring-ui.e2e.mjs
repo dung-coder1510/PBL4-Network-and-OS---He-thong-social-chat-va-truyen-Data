@@ -44,7 +44,7 @@ try {
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/test`)
   await page.getByRole('heading', { name: 'Kết nối theo tài khoản', exact: true }).waitFor()
   await page.getByLabel('Tìm trong trang kết nối').fill('không tồn tại')
-  assert.equal(await page.getByText('@test · #1', { exact: true }).count(), 0)
+  assert.equal(await page.getByText('@test - #1', { exact: true }).count(), 0)
   await page.getByLabel('Tìm trong trang kết nối').fill('')
   await page.getByRole('tab', { name: 'Lưu lượng', exact: true }).click()
   await page.getByRole('img', { name: /đỉnh HTTP 2/ }).waitFor()

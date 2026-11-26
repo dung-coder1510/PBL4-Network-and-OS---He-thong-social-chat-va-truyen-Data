@@ -2,7 +2,7 @@
 
 - **Ngày thực hiện:** 2026-11-23
 - **Mục tiêu:** Giải quyết triệt để nút thắt cổ chai của kênh dự phòng qua máy chủ HTTPS (`HTTPS relay`): nâng cấp từ mô hình 1 luồng tuần tự (hoặc 1–4 kết nối gom tuyến tính phụ thuộc thứ tự byte) sang truyền phân mảnh song song **4 kết nối `POST`/`PUT` + 4 kết nối `GET` mặc định** theo từng mảnh cố định **4 MiB**, giữ giới hạn RAM máy chủ chặt chẽ (**256 MiB toàn cục**, thiết kế nền **192 MiB**), toàn vẹn **SHA-256 giống `Get-FileHash`**, không đổi schema SQL (vẫn tự chạy tốt ngay cả khi DB chưa áp dụng `003_deferred_file_hash.sql`), và khả năng tự hồi phục khi rớt mảnh hoặc hết phiên JWT.
-- **Release triển khai AWS (`13.211.243.90`):** `20261123T130431Z-phase2` (bản gốc Pha 2); các bản vá vận hành cross-origin, bỏ `OPTIONS` preflight, gộp ghi `4 MiB` và mặc định `4` kết nối được hợp nhất đến release **`20261123T170839Z-phase3`** (`backend` từ `20261123T162606Z-phase3`).
+- **Release triển khai AWS (`13.211.243.90`):** `20261123T130431Z-phase2` (bản gốc Pha 2); các bản vá vận hành cross-origin, bỏ `OPTIONS` preflight, gộp ghi `4 MiB` và mặc định `4` kết nối được hợp nhất đến release **`20261124T051303Z-phase3`** (`backend` từ `20261123T162606Z-phase3`).
 
 ---
 
@@ -88,13 +88,13 @@ Trong lần chạy Playwright Chrome đầu tiên (`tests/file-flow.e2e.mjs`), c
 - `tests/files.integration.mjs`: **16/16 PASS**.
 
 ### 4.3. Unit tests JS, Lint & Build sau bản vá cuối cùng
-- `node --test` (toàn bộ unit files thuần trong `tests/file-*.mjs`, không bao gồm `*.e2e.mjs`, `*-http.mjs`, `file-relay-protocol.mjs`) + `tests/file-relay-protocol.mjs`: **88/88 PASS** và `file-relay-protocol.mjs` **PASS**.
+- `node --test` (toàn bộ unit files thuần trong `tests/file-*.mjs`, không bao gồm `*.e2e.mjs`, `*-http.mjs`, `file-relay-protocol.mjs`) + `tests/file-relay-protocol.mjs`: **90/90 PASS** và `file-relay-protocol.mjs` **PASS**.
 - `npm --prefix frontend run lint` (`oxlint`): **0 warnings, 0 errors** trên 67 tệp.
-- `npm --prefix frontend run build`: Thành công (`506ms` build thường; `409ms` bản production `index-XG7kPZAO.js`).
+- `npm --prefix frontend run build`: Thành công (`741ms` build thường; `346ms` bản production `index-BRdIrAy9.js`).
 
 ### 4.4. Bộ 4 Playwright Chrome E2E (`TRUNG`, DB tạm đã xóa sạch sau bản vá cuối)
 - `tests/file-relay-diagnostics.e2e.mjs`: **PASS** (`Máy này → máy chủ`: `274.18 MB/s · 0.4 giây`; `Máy chủ → máy này và ghi đĩa`: `40.60 MB/s · 2.7 giây`).
-- `tests/file-flow.e2e.mjs`: **9/9 cases PASS**.
+- `tests/file-flow.e2e.mjs`: **10/10 cases PASS**.
 - `tests/file-stream.e2e.mjs`: **24/24 cases PASS**.
 - `tests/file-relay.e2e.mjs`: **PASS toàn bộ**, bao gồm:
   - Early HTTP bytes & scoped receipt: **PASS**
@@ -117,10 +117,10 @@ Trong lần chạy Playwright Chrome đầu tiên (`tests/file-flow.e2e.mjs`), c
 
 1. **Cập nhật Nginx (`/etc/nginx/sites-available/pbl4`):**
    - Đổi regex streaming từ `^/api/v1/files/([0-9]+/relay/content|relay/diagnostics)$` thành `^/api/v1/files/([0-9]+/relay/(content|parts/[0-9]+)|relay/diagnostics)$` (tắt `proxy_request_buffering`, `proxy_buffering`, `proxy_cache` và thêm `access_log off;` để bỏ log I/O trên các request truyền mảnh).
-2. **Build & phát hành mới nhất (từ `20261123T130431Z-phase2` đến `20261123T170839Z-phase3`):**
+2. **Build & phát hành mới nhất (từ `20261123T130431Z-phase2` đến `20261124T051303Z-phase3`):**
    - Frontend build trên Windows với `VITE_API_BASE_URL=https://wiremess.io.vn/api/v1`, `VITE_FILE_RELAY_CONTENT_BASE_URL=https://rt.wiremess.io.vn/api/v1`, `VITE_CHAT_HUB_URL=https://rt.wiremess.io.vn/hubs/chat`.
-   - Bundle hiện hành trên cả `wiremess.io.vn` và `rt.wiremess.io.vn`: **`index-XG7kPZAO.js`** (`sha256: bb5e4fc4d90c2c233278910b50c0af16cf80da4cfc1e823b27bbe1870b5fea79`) cùng 2 worker `fileReceiveHashWorker-Dl9VAYMD.js` và `fileHashWorker-BLJs4aRq.js`.
-   - Backend đang phục vụ từ `/opt/pbl4/releases/20261123T170839Z-phase3/backend` (nhị phân kế thừa từ `20261123T162606Z-phase3`, trạng thái `Healthy` trên `http://127.0.0.1:5000/health/ready`, cả 2 domain trả HTTP `401` chuẩn cho `/api/v1/files/configuration`).
+   - Bundle hiện hành trên cả `wiremess.io.vn` và `rt.wiremess.io.vn`: **`index-BRdIrAy9.js`** (`sha256: 6a1541fd728361c53396e32db328309b691540365bfd6773b5fb901aeb91f9d1`) cùng 2 worker `fileReceiveHashWorker-Dl9VAYMD.js` và `fileHashWorker-BLJs4aRq.js`.
+   - Backend đang phục vụ từ `/opt/pbl4/releases/20261124T051303Z-phase3/backend` (nhị phân kế thừa từ `20261123T162606Z-phase3`, trạng thái `Healthy` trên `http://127.0.0.1:5000/health/ready`, cả 2 domain trả HTTP `401` chuẩn cho `/api/v1/files/configuration`).
 
 ---
 

@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useChatRealtime } from './chatRealtimeContext.js'
 import { FileTransferContext } from './fileTransferContext.js'
+import { useNotifications } from './notificationContext.js'
 import { createFileTransfers } from '../services/fileTransfers.js'
 import LargeFileWarningDialog from '../components/files/LargeFileWarningDialog.jsx'
 import '../styles/files.css'
 
 export function FileTransferProvider({ token, user, developerMode, preferredChannelCount, parallelFileConnections,
-  relayConnectionCount, allowTurnForFiles = false, onRelayActivity, children }) {
+  relayConnectionCount, webrtcConnectionCount = null, allowTurnForFiles = false, onRelayActivity, children }) {
   const { connection, connectionState } = useChatRealtime()
+  const { notifyFile, setPendingFileCount } = useNotifications()
   const manager = useRef(null)
+  const allowTurnRef = useRef(allowTurnForFiles)
+  const tokenRef = useRef(token)
   const [snapshot, setSnapshot] = useState({ items: [], nextCursor: null })
-  const [notice, setNotice] = useState('')
   const [largeFile, setLargeFile] = useState(null)
   const confirmation = useRef(null)
   const finishConfirmation = useCallback(accepted => {
@@ -28,8 +31,19 @@ export function FileTransferProvider({ token, user, developerMode, preferredChan
   const loadConversation = useCallback((...args) => manager.current?.loadConversation(...args) || Promise.resolve(), [])
 
   useEffect(() => {
+    tokenRef.current = token
+    manager.current?.setToken?.(token)
+  }, [token])
+
+  useEffect(() => {
+    allowTurnRef.current = allowTurnForFiles
+    manager.current?.setAllowTurnForFiles(allowTurnForFiles)
+  }, [allowTurnForFiles])
+
+  useEffect(() => {
     const current = createFileTransfers({
-      token, userId: user.id, onChange: setSnapshot, onNotice: setNotice, confirmLargeFile, onRelayActivity,
+      token: tokenRef.current, userId: user.id, onChange: setSnapshot, onNotice: notifyFile, confirmLargeFile, onRelayActivity,
+      allowTurnForFiles: allowTurnRef.current,
     })
     manager.current = current
     return () => {
@@ -37,18 +51,21 @@ export function FileTransferProvider({ token, user, developerMode, preferredChan
       finishConfirmation(false)
       if (manager.current === current) manager.current = null
     }
-  }, [token, user.id, confirmLargeFile, finishConfirmation, onRelayActivity])
-
-  useEffect(() => {
-    manager.current?.setAllowTurnForFiles(allowTurnForFiles)
-  }, [allowTurnForFiles])
+  }, [user.id, confirmLargeFile, finishConfirmation, onRelayActivity, notifyFile])
 
   useEffect(() => {
     manager.current?.setConnection(connection ?? null)
     if (connectionState === 'connected')
-      void manager.current?.load().catch(error => setNotice(error.message))
+      void manager.current?.load().catch(error => notifyFile(error.message, { kind: 'file-error' }))
     else manager.current?.disconnected()
-  }, [connection, connectionState, token, user.id])
+  }, [connection, connectionState, user.id, notifyFile])
+
+  useEffect(() => {
+    const incomingOffers = snapshot.items.filter(item => item.senderId !== user.id && item.status === 'offered').length
+    setPendingFileCount(incomingOffers)
+  }, [snapshot.items, user.id, setPendingFileCount])
+
+  useEffect(() => () => setPendingFileCount(0), [setPendingFileCount])
 
   return (
     <FileTransferContext.Provider value={{
@@ -56,15 +73,11 @@ export function FileTransferProvider({ token, user, developerMode, preferredChan
       loadConversation, developerMode,
       offer: (conversationId, file, transport) =>
         manager.current.offer(conversationId, file, preferredChannelCount, parallelFileConnections, transport,
-          relayConnectionCount),
+          relayConnectionCount, webrtcConnectionCount),
       action: (...args) => manager.current.action(...args),
       loadMore: () => manager.current.load(true),
       forgetDownload: id => manager.current.forgetDownload(id),
     }}>
-      {notice && <div className="file-notice" role="status">
-        <a href="#chat">{notice}</a>
-        <button type="button" aria-label="Đóng thông báo tệp" onClick={() => setNotice('')}>×</button>
-      </div>}
       {children}
       {largeFile && <LargeFileWarningDialog file={largeFile}
         onConfirm={() => finishConfirmation(true)} onCancel={() => finishConfirmation(false)} />}

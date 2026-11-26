@@ -21,8 +21,8 @@ export default function ConversationList({ items, loading, error, query, onQuery
         <div className="conv-list-title">
           <h2>Trò chuyện</h2>
           <div className="thread-actions">
-            <button className="icon-btn" type="button" onClick={onRefresh} disabled={loading} aria-label="Làm mới cuộc trò chuyện" title="Làm mới">↻</button>
-            <button className="icon-btn" type="button" onClick={onCreate} aria-label="Cuộc trò chuyện mới" title="Cuộc trò chuyện mới"><Icon name="edit" /></button>
+            <button className="icon-btn" type="button" onClick={onRefresh} disabled={loading} aria-label="Làm mới cuộc trò chuyện" title="Làm mới"><Icon name="history" size="ico-sm" /></button>
+            <button className="icon-btn" type="button" onClick={onCreate} aria-label="Cuộc trò chuyện mới" title="Cuộc trò chuyện mới"><Icon name="edit" size="ico-sm" /></button>
           </div>
         </div>
         <label className="field-wrap"><Icon name="search" />
@@ -39,7 +39,7 @@ export default function ConversationList({ items, loading, error, query, onQuery
             : activity ? `${activity.senderId === currentUserId ? 'Bạn: ' : ''}${activity.fileName ? '[Tệp] ' + activity.fileName : activity.content}`
             : 'Chưa có tin nhắn'
           return (
-          <button className={`conv-item${selectedId === item.id ? ' selected' : ''}`} type="button"
+          <button className={`conv-item${selectedId === item.id ? ' selected' : ''}${item.unreadCount > 0 ? ' has-unread' : ''}`} type="button"
             key={item.id} onClick={() => onSelect(item.id)} aria-current={selectedId === item.id ? 'true' : undefined}
             aria-label={`Mở cuộc trò chuyện với ${item.peer.displayName}`}>
             <Avatar person={{ id: item.peer.id, name: item.peer.displayName, online: item.peer.isOnline }} size="sm" />

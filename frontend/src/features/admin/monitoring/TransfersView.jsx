@@ -9,7 +9,7 @@ function TransferTimeline({ file, events, onClose }) {
   useEffect(() => { heading.current?.focus() }, [file.id])
   return <aside className="aw-transfer-detail" aria-labelledby="aw-transfer-title" onKeyDown={event => { if (event.key === 'Escape') onClose() }}>
     <header><div><h3 id="aw-transfer-title" ref={heading} tabIndex={-1}>Dòng thời gian phiên #{file.id}</h3>
-    <p>{file.senderId} → {file.receiverId} · {bytes(file.fileSizeBytes)}</p></div>
+    <p>{file.senderId} → {file.receiverId} - {bytes(file.fileSizeBytes)}</p></div>
     <button className="icon-btn" type="button" aria-label="Đóng dòng thời gian" onClick={onClose}><Icon name="close" /></button></header>
     <ol className="aw-transfer-timeline">{events.map((event, index) => <li key={index} className={['failure-report', 'failed'].includes(event.stage) ? 'has-error' : ''}>
       <span className="aw-timeline-point" /><div><span className="aw-source">{sourceName(event.source)}</span><br /><strong>{stageName(event.stage)}</strong><time dateTime={event.at}>{time(event.at)}</time>
@@ -37,7 +37,7 @@ export default function TransfersView({ data, loading, page, age, onPrevious, on
           <td>{bytes(file.fileSizeBytes)}</td><td><span className={`aw-state aw-file-state--${file.status}`}>{fileStatus(file.status)}</span>
             {failure && <small className="aw-error">{failure.reason || 'Có báo cáo lỗi'} ({sourceName(failure.source)})</small>}
             {!failure && file.status === 'failed' && <small>Chưa đủ dữ liệu xác định nguyên nhân</small>}</td>
-          <td>{last ? <div className="aw-file-report"><strong>{stageName(last.stage)}</strong><small>{sourceName(last.source)} · {bytes(last.bytes)}</small>
+          <td>{last ? <div className="aw-file-report"><strong>{stageName(last.stage)}</strong><small>{sourceName(last.source)} - {bytes(last.bytes)}</small>
             {progress != null && <progress aria-label={`Tiến độ client báo cho phiên #${file.id}`} value={progress} max={100} />}
             {liveStatuses.includes(file.status) && <Freshness seconds={age(last)} label="Mẫu" />}</div> : <span className="aw-caption">Chưa có báo cáo client</span>}</td></tr>
       })}</tbody></table>{!data.files.length && <Empty icon="folder" title="Chưa có phiên truyền tệp">Các phiên truyền tệp sẽ được theo dõi tại đây.</Empty>}</div>

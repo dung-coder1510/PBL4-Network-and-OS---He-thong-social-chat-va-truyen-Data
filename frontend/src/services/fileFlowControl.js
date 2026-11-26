@@ -54,13 +54,14 @@ export function createFileFlowControl({ initialWindow = INITIAL_FILE_WINDOW,
       if (adaptive) {
         const rtt = roundTripMs()
         const latency = Number.isFinite(rtt) && rtt > 0 ? rtt : 0
+        const highSpeed = slowWriteMs > 100
         const writerSlow = receiverWriteMs !== null && receiverWriteMs > slowWriteMs
         const stalled = gap > Math.max(1500, latency * 4)
-        if (writerSlow || stalled) windowBytes *= 0.75
+        const congested = highSpeed && latency >= 500
+        if (writerSlow || stalled || congested) windowBytes *= 0.75
         else {
           // BDP có dự phòng cho ghi đĩa/ACK. Thiếu RTT thì chỉ thăm dò tăng
           // khi thực sự phải chờ pipeline và máy nhận ghi đủ nhanh.
-          const highSpeed = slowWriteMs > 100
           const fastWriteLimit = highSpeed ? Math.min(120, Math.floor(slowWriteMs * 0.4)) : 25
           const bdpSeconds = highSpeed ? Math.max(0.5, latency / 1000) : Math.max(0.05, latency / 1000)
           const reserveBytes = highSpeed ? WRITE_RESERVE_BYTES * 8 : WRITE_RESERVE_BYTES

@@ -9,7 +9,7 @@ import './admin.css'
 
 const sections = [
   ['users', 'Tài khoản', 'users', 'Tra cứu & quản lý quyền'],
-  ['monitoring', 'Hoạt động hệ thống', 'activity', 'Kết nối · Truyền tệp · Lưu lượng'],
+  ['monitoring', 'Hoạt động hệ thống', 'activity', 'Kết nối - Truyền tệp - Lưu lượng'],
   ['logs', 'Nhật ký', 'history', 'Lịch sử xử lý tài khoản'],
 ]
 

@@ -45,9 +45,9 @@ export function classifyTextRoute(stats) {
 
 // Doi trang thai ky thuat sang nhan UI; khong suy ra ket noi truc tiep chi tu trang thai connected.
 export const textRouteLabel = state => {
-  if (state?.state === 'connecting') return 'Đang kết nối P2P · tạm dùng SignalR'
+  if (state?.state === 'connecting') return 'Đang kết nối P2P - tạm dùng SignalR'
   if (state?.route === 'direct') return 'WebRTC trực tiếp'
   if (state?.route === 'turn') return 'WebRTC qua TURN'
-  if (state?.route === 'webrtc') return 'WebRTC · chưa xác định đường mạng'
+  if (state?.route === 'webrtc') return 'WebRTC - chưa xác định đường mạng'
   return 'SignalR dự phòng'
 }

@@ -9,8 +9,10 @@ const createNativePeer = config => new RTCPeerConnection(config)
 // Tra cac thao tac gui, nhan, thu ket noi lai va huy; trang thai duoc day ra qua callback.
 export function createTextChatTransport({ connection, token, userId, onMessage, onState, onSyncNeeded = () => {},
   createPeer = createNativePeer,
-  loadConfiguration = signal => request('/files/configuration', { token, signal }),
-  ackTimeoutMs = 5000, negotiationTimeoutMs = 15000 }) {
+  loadConfiguration,
+  ackTimeoutMs = 8000, negotiationTimeoutMs = 20000 }) {
+  let currentToken = token
+  const fetchConfiguration = loadConfiguration ?? (signal => request('/files/configuration', { token: currentToken, signal }))
   const peers = new Map()
   const byConversation = new Map()
   const desired = new Set()
@@ -24,7 +26,7 @@ export function createTextChatTransport({ connection, token, userId, onMessage, 
   // So the he giup bo qua ket qua bat dong bo cua ket noi cu sau reconnect/logout.
   let generation = 0
   // Dung chung Promise tai cau hinh ICE; xoa cache khi loi de lan sau co the thu lai.
-  const config = () => configuration ??= loadConfiguration(controller.signal)
+  const config = () => configuration ??= fetchConfiguration(controller.signal)
     .catch(error => { configuration = null; throw error })
   // Day trang thai duong truyen ra UI, nhung khong cap nhat sau khi manager da huy.
   const state = (conversationId, value) => { if (!disposed) onState(conversationId, value) }
@@ -50,7 +52,7 @@ export function createTextChatTransport({ connection, token, userId, onMessage, 
       byConversation.delete(peer.session.conversationId)
     clearTimeout(peer.timer)
     // Bo handler truoc khi close de su kien onclose khong tu goi release long nhau.
-    if (peer.pc) peer.pc.onicecandidate = peer.pc.ondatachannel = peer.pc.onconnectionstatechange = null
+    if (peer.pc) peer.pc.onicecandidate = peer.pc.ondatachannel = peer.pc.onconnectionstatechange = peer.pc.oniceconnectionstatechange = null
     if (peer.channel) {
       peer.channel.onopen = peer.channel.onmessage = peer.channel.onclose = peer.channel.onerror = null
       peer.channel.close()
@@ -87,6 +89,8 @@ export function createTextChatTransport({ connection, token, userId, onMessage, 
     // Bao server endpoint da ready truoc khi cho phep client chon duong gui P2P.
     channel.onopen = async () => {
       try {
+        await peer.outgoing.catch(() => {})
+        if (peers.get(session.sessionId) !== peer || channel.readyState !== 'open') return
         await connection.invoke('TextSessionReady', session.sessionId)
         if (peers.get(session.sessionId) !== peer) return
         clearTimeout(peer.timer)
@@ -153,7 +157,7 @@ export function createTextChatTransport({ connection, token, userId, onMessage, 
         // Noi ICE sau offer/answer de server da ghi nhan SDP truoc khi nhan signal tiep theo.
         peer.outgoing = peer.outgoing.then(() => connection.invoke('SendTextSignal', {
           sessionId: session.sessionId, kind: 'ice', payload: JSON.stringify(event.candidate.toJSON()),
-        })).catch(() => release(session.sessionId))
+        })).catch(() => {})
       }
       // Mat mang tam thi dung P2P toi da 5 giay; noi lai thi doc route, that bai thi don peer.
       peer.pc.onconnectionstatechange = () => {
@@ -175,13 +179,14 @@ export function createTextChatTransport({ connection, token, userId, onMessage, 
       if (localA) {
         attach(peer, peer.pc.createDataChannel('chat-v1', { ordered: true }))
         // Dat truoc hang doi outgoing vi setLocalDescription co the phat ICE ngay lap tuc.
-        peer.outgoing = peer.outgoing.then(async () => {
+        const sendOffer = peer.outgoing.then(async () => {
           await peer.pc.setLocalDescription(await peer.pc.createOffer())
           await connection.invoke('SendTextSignal', {
             sessionId: session.sessionId, kind: 'offer', payload: peer.pc.localDescription.sdp,
           })
         })
-        await peer.outgoing
+        peer.outgoing = sendOffer.catch(() => {})
+        await sendOffer
       }
     })()
     try { await peer.initialized }
@@ -196,25 +201,27 @@ export function createTextChatTransport({ connection, token, userId, onMessage, 
       await peer.initialized
       if (peers.get(signal.sessionId) !== peer || !peer.pc) return
       if (signal.kind === 'ice') {
-        const candidate = JSON.parse(signal.payload)
-        // ICE den truoc SDP duoc giu tam; chi addIceCandidate sau khi co remoteDescription.
-        if (peer.pc.remoteDescription) await peer.pc.addIceCandidate(candidate)
-        else {
-          if (peer.candidates.length >= 128) throw new Error('Quá nhiều ICE.')
-          peer.candidates.push(candidate)
-        }
+        try {
+          const candidate = JSON.parse(signal.payload)
+          // ICE den truoc SDP duoc giu tam; chi addIceCandidate sau khi co remoteDescription.
+          if (peer.pc.remoteDescription) await peer.pc.addIceCandidate(candidate)
+          else if (peer.candidates.length < 128) peer.candidates.push(candidate)
+        } catch { /* Bo qua ICE candidate loi de khong dong phien P2P. */ }
       } else {
         await peer.pc.setRemoteDescription({ type: signal.kind, sdp: signal.payload })
-        for (const candidate of peer.candidates) await peer.pc.addIceCandidate(candidate)
+        for (const candidate of peer.candidates) {
+          try { await peer.pc.addIceCandidate(candidate) } catch {}
+        }
         peer.candidates = []
         if (signal.kind === 'offer') {
-          peer.outgoing = peer.outgoing.then(async () => {
+          const sendAnswer = peer.outgoing.then(async () => {
             await peer.pc.setLocalDescription(await peer.pc.createAnswer())
             await connection.invoke('SendTextSignal', {
               sessionId: signal.sessionId, kind: 'answer', payload: peer.pc.localDescription.sdp,
             })
           })
-          await peer.outgoing
+          peer.outgoing = sendAnswer.catch(() => {})
+          await sendAnswer
         }
       }
     }).catch(() => release(signal.sessionId))
@@ -272,6 +279,7 @@ export function createTextChatTransport({ connection, token, userId, onMessage, 
   connection.on('TextSessionClosed', closed)
   return {
     ensure,
+    setToken(next) { currentToken = next },
     // Thu lai cac conversation da mo; ensure tu bo qua phien hien tai va yeu cau dang chay.
     refresh() { for (const id of desired) void ensure(id) },
     // Dua tin SignalR/tai bu vao pipeline chung; ACK rieng le neu caller chua ACK truoc do.
@@ -328,11 +336,13 @@ export function createTextChatTransport({ connection, token, userId, onMessage, 
       let saved
       try {
         saved = await connection.invoke('CommitPeerMessage', { sessionId: peer.session.sessionId, message })
-      } catch {
+      } catch (error) {
         // Co the server da luu nhung response bi mat; gui SignalR cung UUID de SQL tra ban cu.
+        const stillReady = error?.message?.includes('TEXT_PEER_NOT_READY') &&
+          peer.ready && peer.channel?.readyState === 'open'
         const result = await connection.invoke('SendMessage', message)
         if (!disposed && generation === sendGeneration) {
-          state(message.conversationId, { state: 'fallback', route: 'signalr' })
+          if (!stillReady) state(message.conversationId, { state: 'fallback', route: 'signalr' })
           emit(result)
         }
         return result

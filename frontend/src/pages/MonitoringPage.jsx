@@ -82,15 +82,15 @@ export default function MonitoringPage({ token }) {
     {metrics && <>
       {metrics.droppedSamples > 0 && <p role="status">Đã loại {metrics.droppedSamples} mẫu do giới hạn bộ nhớ.
         Biểu đồ và thống kê chỉ phản ánh mẫu còn giữ từ {time(metrics.sampleWindowStart)}, không phải toàn bộ lưu lượng.</p>}
-      <p><strong>{metrics.totalConnections}</strong> kết nối SignalR · <strong>{metrics.connectedUsers}</strong> tài khoản có kết nối.
+      <p><strong>{metrics.totalConnections}</strong> kết nối SignalR - <strong>{metrics.connectedUsers}</strong> tài khoản có kết nối.
         Hiển thị tối đa {metrics.connectionLimit} kết nối thuộc trang người dùng này.</p>
       <h2>1. Tài khoản và kết nối</h2>
       <label>Tìm trong trang hiện tại <input value={query} onChange={event => setQuery(event.target.value)} /></label>
       <div className="table-wrap"><table><thead><tr><th>Tài khoản</th><th>Vai trò / trạng thái</th><th>Kết nối hiện tại</th></tr></thead>
         <tbody>{data.users.filter(user => `${user.username} ${user.displayName}`.toLowerCase().includes(query.toLowerCase())).map(user => <tr key={user.id}>
-          <td>{user.displayName}<small>@{user.username} · #{user.id}</small></td><td>{user.role} · {user.isDisabled ? 'Bị khóa' : 'Hoạt động'}</td><td>
+          <td>{user.displayName}<small>@{user.username} - #{user.id}</small></td><td>{user.role} - {user.isDisabled ? 'Bị khóa' : 'Hoạt động'}</td><td>
             {connections.filter(link => link.userId === String(user.id)).map(link => <div key={link.id}>
-              <code>{link.id.slice(0, 10)}…</code> · mở {time(link.connectedAt)} · heartbeat {time(link.lastHeartbeatAt)}
+              <code>{link.id.slice(0, 10)}…</code> - mở {time(link.connectedAt)} - heartbeat {time(link.lastHeartbeatAt)}
             </div>)}
             {!connections.some(link => link.userId === String(user.id)) && 'Không có kết nối được ghi nhận'}
           </td></tr>)}</tbody></table></div>
@@ -99,10 +99,10 @@ export default function MonitoringPage({ token }) {
       <h2>2. Request API / SignalR</h2>
       <div className="monitor-charts">{['HTTP', 'SignalR'].map(kind => <RequestChart key={kind} kind={kind} series={metrics.series} generatedAt={metrics.generatedAt} />)}</div>
       <h2>3. Lưu lượng và thời gian xử lý backend</h2>
-      <p>Đang xử lý: {metrics.activeHttp ?? 0} HTTP · {metrics.activeHub ?? 0} lời gọi Hub.</p>
+      <p>Đang xử lý: {metrics.activeHttp ?? 0} HTTP - {metrics.activeHub ?? 0} lời gọi Hub.</p>
       <p>Thời gian gồm xử lý và chờ trong pipeline/phương thức; không phải độ trễ mạng. Heartbeat được liệt kê riêng.</p>
       <div className="table-wrap"><table><thead><tr><th>Loại / thao tác</th><th>Số mẫu</th><th>Lỗi / từ chối / hủy</th><th>TB / p95 (ms)</th><th>Byte vào / ra</th></tr></thead>
-        <tbody>{metrics.operations.map(op => <tr key={op.kind + op.operation}><td>{op.kind} · {op.operation}</td><td>{op.count}</td>
+        <tbody>{metrics.operations.map(op => <tr key={op.kind + op.operation}><td>{op.kind} - {op.operation}</td><td>{op.count}</td>
           <td>{op.errors} / {op.rejected} / {op.cancelled}</td><td>{number(op.averageMs)} / {number(op.p95Ms)}</td><td>{number(op.inBytes)} / {number(op.outBytes)}</td></tr>)}</tbody></table></div>
       <h2>4. Phiên truyền file</h2>
       <p>Trạng thái do backend quyết định. Client báo giai đoạn/tiến độ để chẩn đoán; màu đỏ không tự đánh dấu phiên thất bại.</p>
@@ -113,7 +113,7 @@ export default function MonitoringPage({ token }) {
           const failure = reports.findLast(event => event.stage === 'failure-report')
           const active = ['offered', 'accepted', 'transferring'].includes(file.status)
           return <tr key={file.id}><td><button className="btn" onClick={() => setSelected(file.id)}>#{file.id}</button> {file.senderId} → {file.receiverId}</td>
-            <td>{number(file.fileSizeBytes)} byte</td><td>{file.status}</td><td>{last ? <>{last.source}: {last.stage} · {number(last.bytes)} byte
+            <td>{number(file.fileSizeBytes)} byte</td><td>{file.status}</td><td>{last ? <>{last.source}: {last.stage} - {number(last.bytes)} byte
               {active && <Freshness seconds={age(last)} />}</> : 'Chưa có báo cáo client'}</td>
             <td>{failure ? `${failure.reason} (${failure.source})` : file.status === 'failed' ? 'UNKNOWN — chưa đủ bằng chứng' : '—'}</td></tr>
         })}</tbody></table></div>

@@ -210,3 +210,129 @@ test('route classification follows selected candidate pair', () => {
   stats.set('r', { candidateType: 'relay' })
   assert.equal(classifyTextRoute(stats), 'turn')
 })
+
+test('failed individual ICE candidate or SendTextSignal ice does not release peer', async () => {
+  const f = await fixture()
+  try {
+    f.pc.addIceCandidate = async () => { throw new Error('bad candidate') }
+    f.handlers.get('TextSignal')({ sessionId: 'session', kind: 'ice', payload: '{"candidate":"bad"}' })
+    f.handlers.get('TextSignal')({ sessionId: 'session', kind: 'ice', payload: 'not-json' })
+    await turn()
+    assert.notEqual(f.pc.closed, true)
+
+    const origInvoke = f.connection.invoke
+    f.connection.invoke = async (name, value) => {
+      if (name === 'SendTextSignal' && value.kind === 'ice') throw new Error('transient ice error')
+      return origInvoke.call(f.connection, name, value)
+    }
+    f.pc.onicecandidate({ candidate: { toJSON: () => ({ candidate: 'c1' }) } })
+    f.pc.onicecandidate({ candidate: { toJSON: () => ({ candidate: 'c2' }) } })
+    await turn()
+    assert.notEqual(f.pc.closed, true)
+  } finally { f.manager.dispose() }
+})
+
+test('receiver waits for SendTextSignal answer to finish before invoking TextSessionReady', async () => {
+  const handlers = new Map()
+  const order = []
+  let resolveAnswer
+  let receiverChannel = null
+  const pc = {
+    localDescription: null,
+    remoteDescription: null,
+    createOffer: async () => ({ type: 'offer', sdp: 'v=0' }),
+    createAnswer: async () => ({ type: 'answer', sdp: 'v=0' }),
+    async setLocalDescription(value) { this.localDescription = value },
+    async setRemoteDescription(value) { this.remoteDescription = value },
+    async addIceCandidate() {},
+    getStats: async () => new Map(),
+    close() { this.closed = true },
+  }
+  const connection = {
+    connectionId: 'B',
+    state: 'Connected',
+    on: (name, handler) => handlers.set(name, handler),
+    off: name => handlers.delete(name),
+    async invoke(name, value) {
+      if (name === 'SendTextSignal' && value.kind === 'answer') {
+        order.push('answer:start')
+        await new Promise(resolve => { resolveAnswer = resolve })
+        order.push('answer:done')
+        return
+      }
+      if (name === 'TextSessionReady') order.push('ready')
+    },
+  }
+  const manager = createTextChatTransport({
+    connection, token: 'unused', userId: 2,
+    onMessage() {}, onState() {},
+    createPeer: () => pc,
+    loadConfiguration: async () => ({ iceServers: [] }),
+  })
+  try {
+    await handlers.get('TextSessionStarted')(session)
+    receiverChannel = { label: 'chat-v1', ordered: true, maxRetransmits: null, maxPacketLifeTime: null,
+      readyState: 'open', close() { this.readyState = 'closed' } }
+    pc.ondatachannel({ channel: receiverChannel })
+    handlers.get('TextSignal')({ sessionId: 'session', kind: 'offer', payload: 'v=0' })
+    await turn()
+    await turn()
+    assert.deepEqual(order, ['answer:start'])
+    const openPromise = receiverChannel.onopen()
+    await turn()
+    assert.deepEqual(order, ['answer:start'])
+    resolveAnswer()
+    await openPromise
+    assert.deepEqual(order, ['answer:start', 'answer:done', 'ready'])
+  } finally { manager.dispose() }
+})
+
+test('CommitPeerMessage TEXT_PEER_NOT_READY delivers via SendMessage without flipping peer state to fallback', async () => {
+  const f = await fixture()
+  try {
+    const initialCount = f.states.length
+    const origInvoke = f.connection.invoke
+    f.connection.invoke = async (name, value) => {
+      if (name === 'CommitPeerMessage') throw new Error('HubException: TEXT_PEER_NOT_READY')
+      return origInvoke.call(f.connection, name, value)
+    }
+    const result = await f.manager.send(message)
+    assert.equal(result.id, '20')
+    assert.equal(f.calls.filter(call => call.name === 'SendMessage').length, 1)
+    assert.equal(f.states.slice(initialCount).some(item => item.state === 'fallback'), false)
+  } finally { f.manager.dispose() }
+})
+
+test('setToken updates textChatTransport without closing an active P2P session', async t => {
+  const seenTokens = []
+  t.mock.method(globalThis, 'fetch', async (_url, options = {}) => {
+    seenTokens.push(options.headers?.Authorization)
+    return Response.json({ iceServers: [] })
+  })
+  const handlers = new Map()
+  const pc = {
+    localDescription: null, remoteDescription: null,
+    createDataChannel: () => ({ label: 'chat-v1', ordered: true, maxRetransmits: null, maxPacketLifeTime: null,
+      readyState: 'open', close() { this.readyState = 'closed' } }),
+    createOffer: async () => ({ type: 'offer', sdp: 'v=0' }),
+    async setLocalDescription(v) { this.localDescription = v },
+    async addIceCandidate() {},
+    getStats: async () => new Map(),
+    close() { this.closed = true },
+  }
+  const connection = {
+    connectionId: 'A', state: 'Connected',
+    on: (n, h) => handlers.set(n, h), off: n => handlers.delete(n),
+    async invoke(name) { if (name === 'StartTextSession') return session },
+  }
+  const manager = createTextChatTransport({
+    connection, token: 'tok-1', userId: 1,
+    onMessage() {}, onState() {}, createPeer: () => pc,
+  })
+  try {
+    manager.setToken('tok-2')
+    await manager.ensure('10')
+    assert.deepEqual(seenTokens, ['Bearer tok-2'])
+    assert.notEqual(pc.closed, true)
+  } finally { manager.dispose() }
+})

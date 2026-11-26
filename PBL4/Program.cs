@@ -179,7 +179,8 @@ namespace PBL4
 
             app.MapControllers();
             app.MapHub<ChatHub>("/hubs/chat", options =>
-                options.CloseOnAuthenticationExpiration = true);
+                // RealtimeSessionFilter + Heartbeat kiểm tra phiên sống; tắt CloseOnAuthenticationExpiration để làm mới JWT ngầm không ngắt SignalR/WebRTC sau 30 phút.
+                options.CloseOnAuthenticationExpiration = false);
 
             app.Run();
         }

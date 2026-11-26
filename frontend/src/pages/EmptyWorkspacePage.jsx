@@ -3,7 +3,7 @@ import Icon from '../components/Icon.jsx'
 const PAGES = {
   chat: ['chat', 'Trò chuyện', 'Chưa có cuộc trò chuyện', 'Các cuộc trò chuyện của bạn sẽ xuất hiện ở đây.'],
   contacts: ['users', 'Danh bạ', 'Chưa có liên hệ', 'Những người bạn thêm vào danh bạ sẽ xuất hiện ở đây.'],
-  calls: ['phone', 'Cuộc gọi', 'Chưa có cuộc gọi', 'Lịch sử cuộc gọi của bạn sẽ xuất hiện ở đây.'],
+  calls: ['phone', 'Cuộc gọi', 'Gọi thoại WebRTC', 'Tính năng gọi thoại thời gian thực đang được phát triển.'],
   files: ['folder', 'Tệp đã chia sẻ', 'Chưa có tệp', 'Các tệp bạn gửi và nhận sẽ xuất hiện ở đây.'],
   admin: ['shield', 'Quản trị', 'Quản lý tài khoản', 'Chức năng quản trị đang được chuẩn bị.'],
 }
@@ -14,8 +14,9 @@ export default function EmptyWorkspacePage({ page, user }) {
   return (
     <div className="page">
       <div className="page-header"><div><h1>{title}</h1><p>Xin chào, {user.displayName}.</p></div></div>
-      <div className="empty account-empty">
-        <Icon name={icon} size="ico-lg" />
+      <div className="empty account-empty empty-card">
+        <span className="empty-icon-ring" aria-hidden="true"><Icon name={icon} size="ico-lg" /></span>
+        {page === 'calls' && <span className="pill pill--indigo empty-status-pill">Đang phát triển</span>}
         <h2>{heading}</h2>
         <p>{description}</p>
       </div>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import Icon from '../components/Icon.jsx'
 import { authApi } from '../services/authApi.js'
 
 function AuthPage({ onAuthenticated, notice = '' }) {
@@ -7,6 +8,7 @@ function AuthPage({ onAuthenticated, notice = '' }) {
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [busy, setBusy] = useState(false)
@@ -19,6 +21,7 @@ function AuthPage({ onAuthenticated, notice = '' }) {
     setSuccess('')
     setPassword('')
     setConfirmPassword('')
+    setShowPassword(false)
   }
 
   async function submit(event) {
@@ -60,14 +63,19 @@ function AuthPage({ onAuthenticated, notice = '' }) {
         <div className="brand"><span className="brand-logo">N</span><span className="brand-name">Nối<span className="brand-dot">.</span></span></div>
         <div className="login-hero">
           <h1>Giữ liên lạc.<br />Cùng nhau kết nối.</h1>
-          <p>Một nơi để trò chuyện, gọi thoại và chia sẻ tệp với bạn bè.</p>
+          <p>Nhắn tin thời gian thực và truyền tệp dung lượng lớn trực tiếp P2P.</p>
+          <div className="login-features">
+            <span className="login-feature-pill"><Icon name="activity" size="ico-sm" />P2P trực tiếp</span>
+            <span className="login-feature-pill"><Icon name="folder" size="ico-sm" />Tệp lớn tới 10 GB</span>
+            <span className="login-feature-pill"><Icon name="shield" size="ico-sm" />Toàn vẹn SHA-256</span>
+          </div>
           <div className="login-bubbles">
             <div className="mini-bubble in">Chiều nay mình cùng xem lại đồ án nhé?</div>
             <div className="mini-bubble out">Oke, 14h nha!</div>
-            <div className="mini-bubble in">Mình gửi tài liệu qua đây nhé.</div>
+            <div className="mini-bubble in">Mình gửi bản dựng qua P2P luôn đây.</div>
           </div>
         </div>
-        <div className="login-foot-left">PBL4 · Hệ thống trao đổi thông tin thời gian thực</div>
+        <div className="login-foot-left">PBL4 - Hệ thống trao đổi thông tin thời gian thực</div>
       </div>
       <div className="login-right">
         <div className="login-form-box">
@@ -89,9 +97,18 @@ function AuthPage({ onAuthenticated, notice = '' }) {
               </div>
               <div className="form-field">
                 <label htmlFor="auth-password">Mật khẩu</label>
-                <input id="auth-password" name="password" type="password" autoComplete={register ? 'new-password' : 'current-password'}
-                  value={password} onChange={e => setPassword(e.target.value)} minLength={register ? 12 : undefined}
-                  maxLength={128} required aria-describedby={register ? 'password-help' : undefined} />
+                <div className="password-input-wrap">
+                  <input id="auth-password" name="password" type={showPassword ? 'text' : 'password'}
+                    autoComplete={register ? 'new-password' : 'current-password'}
+                    value={password} onChange={e => setPassword(e.target.value)} minLength={register ? 12 : undefined}
+                    maxLength={128} required aria-describedby={register ? 'password-help' : undefined} />
+                  <button className="password-toggle-btn" type="button"
+                    onClick={() => setShowPassword(value => !value)}
+                    aria-label={showPassword ? 'Ẩn ký tự' : 'Hiện ký tự'}
+                    aria-pressed={showPassword}>
+                    <Icon name="eye" size="ico-sm" />
+                  </button>
+                </div>
                 {register && <small id="password-help">12–128 ký tự. Có thể dùng khoảng trắng.</small>}
               </div>
               {register && <div className="form-field">

@@ -119,6 +119,21 @@ test('filterIceServers strips TURN when allowTurn=false and preserves all server
   assert.deepEqual(filterIceServers(iceServers, true), iceServers)
 })
 
+test('filterIceServers keeps a credential-free STUN derived from turn: UDP when only TURN is configured', () => {
+  const onlyTurn = [{
+    urls: [
+      'turn:rt.wiremess.io.vn:3478?transport=udp',
+      'turn:rt.wiremess.io.vn:3478?transport=tcp',
+      'turns:rt.wiremess.io.vn:5349?transport=tcp',
+    ],
+    username: 'u',
+    credential: 'p',
+  }]
+  assert.deepEqual(filterIceServers(onlyTurn, false), [{ urls: ['stun:rt.wiremess.io.vn:3478'] }])
+  assert.deepEqual(filterIceServers(onlyTurn, true), onlyTurn)
+  assert.deepEqual(filterIceServers([{ urls: ['turn:t.example.test:3478?transport=tcp', 'turns:t.example.test:5349'], username: 'u', credential: 'p' }], false), [])
+})
+
 test('file-v7 streams 0 B, 1 B, 300 KiB and 6 MiB+17 B across 2 connections with work-stealing and Worker SHA-256', async t => {
   installTransferMockWorker(t)
   for (const size of [0, 1, 300 * 1024, 6 * 1024 * 1024 + 17]) {
@@ -400,4 +415,111 @@ test('file-v7 uses 256 KiB low threshold across 2 connections and unlocks 16 MiB
     assert.ok(flow.windowBytes > 8 * 1024 * 1024, `Expected windowBytes (${flow.windowBytes}) > 8 MiB`)
     assert.equal(flow.windowBytes, V7_MAX_FILE_WINDOW)
   }
+})
+
+test('file-v7 streams 6 MiB+17 B across 4 parallel connections with exact Worker SHA-256', async t => {
+  installTransferMockWorker(t)
+  const size = 6 * 1024 * 1024 + 17
+  const payload = randomBytes(size)
+  const expectedHash = digest(payload)
+  const transferId = 'v7-4conns'
+  const abort = new AbortController()
+  const target = createMemoryTarget('v7-4conns.bin')
+  const disk = await createPartFileStorage(target, abort.signal, size, v7BlockBytes(size))
+
+  let finalizedHash = null
+  let finishPromise = null
+  let sender
+  const channels = [0, 1, 2, 3].map(idx => createMockChannel(idx, (chIndex, data) => {
+    if (typeof data === 'string') {
+      const frame = JSON.parse(data)
+      if (frame.type === 'END' && receiver.end(chIndex, frame.activeChannels)) finishPromise = receiver.finish()
+    } else {
+      void receiver.push(data, chIndex)
+    }
+  }))
+
+  const receiver = createStreamReceiver({
+    size,
+    signal: abort.signal,
+    protocolVersion: HIGH_SPEED_PROTOCOL,
+    channelCount: 4,
+    maxWindowBytes: V7_MAX_FILE_WINDOW,
+    writePart: (blockIdx, offset, data) => disk.writePart(blockIdx, offset, data),
+    acknowledge: (bytes, details) => sender.handle(streamControl('ACK', transferId, bytes, 0, details), 0),
+    onProgress() {},
+  })
+
+  sender = createStreamSender({
+    channels,
+    transferId,
+    signal: abort.signal,
+    protocolVersion: HIGH_SPEED_PROTOCOL,
+    onProgress() {},
+    roundTripMs: () => 25,
+  })
+
+  const caps = receiver.negotiateConnection(65536 + 8)
+  for (let idx = 0; idx < 4; idx++)
+    sender.handle(streamControl('READY', transferId, undefined, idx, caps), idx)
+
+  await sender.send(new Blob([payload]), async () => {}, async sha => { finalizedHash = sha })
+  assert.equal(await finishPromise, size)
+  assert.equal(finalizedHash, expectedHash)
+  assert.equal(await disk.verify(finalizedHash), expectedHash)
+  await disk.commit()
+  assert.deepEqual(target.bytes, payload)
+  for (const ch of channels) assert.ok(ch.sentBytes > 0, 'Expected all 4 connections to send blocks')
+})
+
+test('file-v7 secondary connection lowering maxMessageSize does not reject in-flight 64 KiB chunks on connection 0', () => {
+  const writes = []
+  const receiver = createStreamReceiver({
+    size: 2 * 1024 * 1024,
+    signal: new AbortController().signal,
+    protocolVersion: HIGH_SPEED_PROTOCOL,
+    channelCount: 2,
+    maxWindowBytes: V7_MAX_FILE_WINDOW,
+    writePart(blockIdx, offset, data) { writes.push({ blockIdx, offset, bytes: data.byteLength }) },
+    acknowledge() {},
+    onProgress() {},
+  })
+
+  const caps0 = receiver.negotiateConnection(65536 + 8, 0)
+  assert.equal(caps0.maxChunkBytes, 65536)
+  const caps1 = receiver.negotiateConnection(32768 + 8, 1)
+  assert.equal(caps1.maxChunkBytes, 32768)
+
+  const frame64k = new Uint8Array(8 + 65536)
+  new DataView(frame64k.buffer).setBigUint64(0, 0n)
+  assert.doesNotThrow(() => receiver.push(frame64k.buffer, 0))
+
+  const oversizedForConn1 = new Uint8Array(8 + 65536)
+  new DataView(oversizedForConn1.buffer).setBigUint64(0, BigInt(1024 * 1024))
+  assert.throws(() => receiver.push(oversizedForConn1.buffer, 1), /kích thước/)
+})
+
+test('file-v7 flow control shrinks window when RTT spikes >= 500 ms (bufferbloat protection)', () => {
+  let now = 0
+  let rtt = 25
+  const flow = createFileFlowControl({
+    initialWindow: V7_INITIAL_FILE_WINDOW,
+    maxWindowCap: V7_MAX_FILE_WINDOW,
+    slowWriteMs: 300,
+    clock: () => now,
+    roundTripMs: () => rtt,
+  })
+  flow.negotiate(V7_MAX_FILE_WINDOW)
+  for (let epoch = 1; epoch <= 4; epoch++) {
+    now += 500
+    flow.waited('buffer', 400)
+    flow.acknowledge(epoch * 3_000_000, 10)
+  }
+  const grown = flow.windowBytes
+  assert.ok(grown > V7_INITIAL_FILE_WINDOW)
+
+  rtt = 900
+  now += 500
+  flow.acknowledge(15_000_000, 10)
+  assert.ok(flow.windowBytes < grown, `Expected window (${flow.windowBytes}) < grown (${grown}) at RTT ${rtt}ms`)
 })

@@ -20,13 +20,23 @@ let ownsTestNames = false
 function sql(query) {
   return execFileSync('sqlcmd', ['-S', sqlServer, '-d', database, '-E', '-C', '-l', '5', '-b', '-h', '-1', '-W', '-Q', 'SET NOCOUNT ON; ' + query], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 }
-async function api(path, { method = 'GET', body, token } = {}) {
+async function api(path, { method = 'GET', body, token, headers: extraHeaders } = {}) {
   const response = await fetch(base + path, {
-    method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    method, headers: {
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      ...extraHeaders,
+    },
     body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(15000),
   })
   return { status: response.status, headers: response.headers, data: await response.json().catch(() => null) }
 }
+function findCookie(headers, name) {
+  const list = typeof headers.getSetCookie === 'function' ? headers.getSetCookie()
+    : (headers.get('set-cookie') ? [headers.get('set-cookie')] : [])
+  return list.find(line => line.startsWith(name + '='))
+}
+const cookiePair = line => (line ? line.split(';')[0] : '')
 function check(label, fn) { fn(); passed++; console.log('PASS ' + label) }
 const login = (body = { username, password }) => api('/sessions', { method: 'POST', body })
 const me = token => api('/users/me', { token })
@@ -74,7 +84,50 @@ try {
     const seconds = (Date.parse(first.data.expiresAt) - Date.now()) / 1000
     assert.ok(seconds > 1750 && seconds <= 1800)
   })
-  const token = first.data.accessToken
+  const refreshCookie1 = findCookie(first.headers, 'pbl4_refresh')
+  const secondCookie = cookiePair(findCookie(second.headers, 'pbl4_refresh'))
+  check('Login sets HttpOnly refresh cookie', () => {
+    assert.ok(refreshCookie1)
+    assert.match(refreshCookie1, /HttpOnly/i)
+    assert.match(refreshCookie1, /SameSite=Lax/i)
+    assert.match(refreshCookie1, /Path=\/api\/v1\/sessions/i)
+  })
+  const missingRefreshHeader = await api('/sessions/refresh', {
+    method: 'POST', headers: { Cookie: cookiePair(refreshCookie1) },
+  })
+  const refreshed = await api('/sessions/refresh', {
+    method: 'POST', headers: { 'X-PBL4-Refresh': '1', Cookie: cookiePair(refreshCookie1) },
+  })
+  const refreshCookie2 = findCookie(refreshed.headers, 'pbl4_refresh')
+  const graceRefresh = await api('/sessions/refresh', {
+    method: 'POST', headers: { 'X-PBL4-Refresh': '1', Cookie: cookiePair(refreshCookie1) },
+  })
+  check('Refresh rotates HttpOnly cookie, enforces anti-CSRF header and honors 30s grace window', () => {
+    assert.equal(missingRefreshHeader.status, 401)
+    assert.equal(refreshed.status, 200)
+    assert.equal(refreshed.data.sessionId, first.data.sessionId)
+    assert.ok(refreshed.data.accessToken && refreshed.data.accessToken !== first.data.accessToken)
+    assert.ok(refreshCookie2 && cookiePair(refreshCookie2) !== cookiePair(refreshCookie1))
+    assert.equal(graceRefresh.status, 200)
+    assert.equal(graceRefresh.data.sessionId, first.data.sessionId)
+    assert.equal(findCookie(graceRefresh.headers, 'pbl4_refresh'), undefined)
+  })
+  const third = await login()
+  const thirdCookie = cookiePair(findCookie(third.headers, 'pbl4_refresh'))
+  const expiredLogout = await api('/sessions/current', {
+    method: 'DELETE', token: 'expired.or.invalid', headers: { 'X-PBL4-Refresh': '1', Cookie: thirdCookie },
+  })
+  const thirdRefreshAfterLogout = await api('/sessions/refresh', {
+    method: 'POST', headers: { 'X-PBL4-Refresh': '1', Cookie: thirdCookie },
+  })
+  const thirdJwtAfterLogout = await me(third.data.accessToken)
+  check('Logout revokes session via refresh cookie even if Bearer JWT expired', () => {
+    assert.equal(expiredLogout.status, 204)
+    assert.match(String(findCookie(expiredLogout.headers, 'pbl4_refresh') || ''), /expires=/i)
+    assert.equal(thirdRefreshAfterLogout.status, 401)
+    assert.equal(thirdJwtAfterLogout.status, 401)
+  })
+  const token = refreshed.data.accessToken
   const profile = await me(token)
   check('Bearer profile returns current DB user with no-store', () => {
     assert.equal(profile.status, 200); assert.equal(profile.data.id, created.data.id)
@@ -97,9 +150,13 @@ try {
   sql("UPDATE dbo.Users SET IsDisabled=1 WHERE Username='" + username + "'")
   const disabled = await login()
   const blockedToken = await me(second.data.accessToken)
-  check('Disabled user cannot log in or use existing token', () => {
+  const blockedRefresh = await api('/sessions/refresh', {
+    method: 'POST', headers: { 'X-PBL4-Refresh': '1', Cookie: secondCookie },
+  })
+  check('Disabled user cannot log in or use existing token or refresh cookie', () => {
     assert.equal(disabled.status, 403); assert.equal(disabled.data.code, 'ACCOUNT_DISABLED')
     assert.equal(blockedToken.status, 401)
+    assert.equal(blockedRefresh.status, 401)
   })
   sql("UPDATE dbo.Users SET IsDisabled=0 WHERE Username='" + username + "'")
   const stillRevoked = await me(second.data.accessToken)

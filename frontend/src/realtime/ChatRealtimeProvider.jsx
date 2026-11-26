@@ -21,10 +21,16 @@ export function ChatRealtimeProvider({ token, user, onSessionExpired, children }
   const [connection, setConnection] = useState(null)
   const [connectionState, setConnectionState] = useState('connecting')
   const [connectionError, setConnectionError] = useState('')
+  const [initialSyncDone, setInitialSyncDone] = useState(false)
   const [syncListeners] = useState(() => new Set())
   const [messageListeners] = useState(() => new Set())
   const textTransport = useRef(null)
+  const tokenRef = useRef(token)
   const [textStates, setTextStates] = useState({})
+  useEffect(() => {
+    tokenRef.current = token
+    textTransport.current?.setToken?.(token)
+  }, [token])
   // Dang ky mot noi nhan tin; tra ham xoa listener khi component unmount.
   const subscribeMessages = useCallback(listener => {
     messageListeners.add(listener)
@@ -60,7 +66,7 @@ export function ChatRealtimeProvider({ token, user, onSessionExpired, children }
       try {
         let afterId = null
         do {
-          const page = await conversationsApi.pendingMessages(token, { afterId }, controller.signal)
+          const page = await conversationsApi.pendingMessages(tokenRef.current, { afterId }, controller.signal)
           for (const message of page.items) {
             if (disposed) return
             const status = await activeConnection.invoke('AcknowledgeMessage', {
@@ -89,7 +95,7 @@ export function ChatRealtimeProvider({ token, user, onSessionExpired, children }
       return synchronization
     }
 
-    activeConnection = createChatConnection(token, {
+    activeConnection = createChatConnection(() => tokenRef.current, {
       // Dung heartbeat va bo peer cu ngay khi SignalR bat dau thu noi lai.
       onReconnecting: () => {
         if (disposed) return
@@ -136,10 +142,10 @@ export function ChatRealtimeProvider({ token, user, onSessionExpired, children }
     window.addEventListener('focus', resumeHeartbeat)
     window.addEventListener('online', networkOnline)
     queueMicrotask(() => {
-      if (!disposed) { setConnection(activeConnection); setTextStates({}) }
+      if (!disposed) { setConnection(activeConnection); setTextStates({}); setInitialSyncDone(false) }
     })
     const manager = createTextChatTransport({
-      connection: activeConnection, token, userId: user.id,
+      connection: activeConnection, token: tokenRef.current, userId: user.id,
       // Phien P2P dong co the de lai tin da commit chua giao; tai bu nen, khong an thread.
       onSyncNeeded: () => { void requestSynchronization(true) },
       // Phat tin tu moi duong truyen toi cung tap subscriber cua UI.
@@ -164,6 +170,7 @@ export function ChatRealtimeProvider({ token, user, onSessionExpired, children }
       heartbeat.start()
       setConnectionState('connected')
       await requestSynchronization()
+      if (!disposed) setInitialSyncDone(true)
     }).catch(failure => {
       if (disposed) return
       setConnectionState('disconnected')
@@ -187,12 +194,13 @@ export function ChatRealtimeProvider({ token, user, onSessionExpired, children }
       removeConversationListener()
       void stopChatConnection(activeConnection)
     }
-  }, [connectionRevision, messageListeners, notifySync, onSessionExpired, token, user.id])
+  }, [connectionRevision, messageListeners, notifySync, onSessionExpired, user.id])
 
   const value = useMemo(() => ({
     connection,
     connectionState,
     connectionError,
+    initialSyncDone,
     subscribeSync,
     subscribeMessages, ensureTextSession, sendTextMessage, textStates,
     // Tang revision de effect huy bo ket noi cu va khoi tao mot ket noi moi theo yeu cau UI.
@@ -201,7 +209,7 @@ export function ChatRealtimeProvider({ token, user, onSessionExpired, children }
       setConnectionError('')
       setConnectionRevision(value => value + 1)
     },
-  }), [connection, connectionError, connectionState, subscribeSync, subscribeMessages,
+  }), [connection, connectionError, connectionState, initialSyncDone, subscribeSync, subscribeMessages,
     ensureTextSession, sendTextMessage, textStates])
 
   return <ChatRealtimeContext.Provider value={value}>{children}</ChatRealtimeContext.Provider>

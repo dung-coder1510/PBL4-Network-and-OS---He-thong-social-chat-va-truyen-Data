@@ -3,9 +3,10 @@ import * as signalR from '@microsoft/signalr'
 const HUB_URL = import.meta.env.VITE_CHAT_HUB_URL || '/hubs/chat'
 
 // Tao ket noi SignalR co JWT trong bo nho; goi callback khi reconnect, noi lai hoac dong.
-export function createChatConnection(token, lifecycle = {}) {
+export function createChatConnection(tokenOrGetter, lifecycle = {}) {
+  const getToken = typeof tokenOrGetter === 'function' ? tokenOrGetter : () => tokenOrGetter
   const connection = new signalR.HubConnectionBuilder()
-    .withUrl(HUB_URL, { accessTokenFactory: () => token })
+    .withUrl(HUB_URL, { accessTokenFactory: () => getToken() })
     // Thu noi lai ngay, roi sau 2/5/10 giay; luong tai bu do provider xu ly khi ket noi lai.
     .withAutomaticReconnect([0, 2000, 5000, 10000])
     .configureLogging(signalR.LogLevel.Warning)

@@ -21,7 +21,7 @@ export default function AccountDetail({ token, active, revision, onFailure, reso
         <span>Quay lại</span><Icon name="close" /></button></header>
     <Feedback resource={resource} onRetry={onRetry} />
     {user && <><div className="aw-profile"><Avatar size="lg" person={{ id: user.id, name: user.displayName }} />
-      <h3>{user.displayName}</h3><p>@{user.username} · #{user.id}</p><AccountState user={user} /></div>
+      <h3>{user.displayName}</h3><p>@{user.username} - #{user.id}</p><AccountState user={user} /></div>
       <dl className="aw-facts"><div><dt>Vai trò</dt><dd>{user.role}</dd></div>
         <div><dt>Hiện diện</dt><dd><span className={`aw-presence ${user.isOnline ? 'online' : ''}`}>{user.isOnline ? 'Online' : 'Offline'}</span></dd></div>
         <div><dt>Ngày tạo</dt><dd>{time(user.createdAt)}</dd></div>
